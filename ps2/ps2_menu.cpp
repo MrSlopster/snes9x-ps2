@@ -1,11 +1,13 @@
-/* On-screen ROM browser.
+/* On-screen menus: ROM browser, settings, in-game menu.
  *
  * Renders text with the core's 8x9 bitmap font (font.h) into GFX.Screen
  * as a 512x224 BGR555 frame and shows it through the normal video path.
  * Input comes straight from libpad (pad 1).
  *
- *   D-pad up/down   move        L1/R1 or left/right   page
- *   Cross           open / load  Circle or Triangle    back
+ * Browser:  up/down move, L1/R1 page, Cross open/load, Circle back,
+ *           Start settings.
+ * Settings: up/down move, left/right change, Circle back (saves).
+ * In-game:  up/down move, Cross select, Circle resume.
  */
 
 #include <stdio.h>
@@ -23,12 +25,18 @@ extern "C" {
 }
 
 #include "snes9x.h"
+#include "memmap.h"
 #include "gfx.h"
 #include "../font.h" /* the core's bitmap font; ps2sdk has its own font.h */
 
 #include "ps2_menu.h"
 #include "ps2_video.h"
 #include "ps2_controls.h"
+#include "ps2_config.h"
+#include "ps2_dirs.h"
+#include "fscompat.h"
+#include "snapshot.h"
+#include "cpuexec.h"
 
 #define MENU_W 512
 #define MENU_H 224
@@ -229,45 +237,342 @@ static unsigned poll_buttons(void)
 	return pressed;
 }
 
-/* ---- browser ------------------------------------------------------- */
+/* Wait until every button is up, so a held combo (Select+Start) or the
+ * button that opened a menu cannot trigger something in the next one. */
+static void wait_release(void)
+{
+	for (int i = 0; i < 300 && ps2_pad_held(0); i++)
+		ps2_video_sync();
+	poll_buttons(); /* resync edge detection */
+}
 
-static void render(const std::string &cwd, const std::vector<Entry> &items, int sel,
-		   int top, const std::string &status, bool status_err)
+/* ---- shared list screen ------------------------------------------- */
+
+struct Row
+{
+	std::string left;
+	std::string right; /* value column (settings) */
+	uint16 colour;
+};
+
+static void render_list(const char *title, const std::string &subtitle,
+			const std::vector<Row> &rows, int sel, int top,
+			const char *empty_text, const std::string &status,
+			bool status_err, const char *help)
 {
 	fill_rows(0, MENU_H / LINE_H + 1, col_bg);
 
-	draw_text(1, 0, "Snes9x " VERSION " for PS2 - select a ROM", col_title);
-	draw_text(1, 1, cwd.empty() ? "Devices" : cwd.c_str(), col_dim, COLS - 2);
+	draw_text(1, 0, title, col_title);
+	draw_text(1, 1, subtitle.c_str(), col_dim, COLS - 10);
 
-	if (items.empty())
-		draw_text(2, LIST_TOP, cwd.empty() ? "(no storage devices found)" : "(no ROMs or folders here)", col_dim);
+	if (rows.empty() && empty_text)
+		draw_text(2, LIST_TOP, empty_text, col_dim);
 
-	for (int r = 0; r < LIST_ROWS && top + r < (int)items.size(); r++)
+	for (int r = 0; r < LIST_ROWS && top + r < (int)rows.size(); r++)
 	{
-		const Entry &e = items[top + r];
+		const Row &e = rows[top + r];
 		int row = LIST_TOP + r;
 		if (top + r == sel)
 			fill_rows(row, 1, col_sel_bg);
 
-		std::string label = e.dir && !cwd.empty() ? e.name + "/" : e.name;
-		draw_text(2, row, label.c_str(), e.dir ? col_dir : col_text, COLS - 3);
+		int left_max = e.right.empty() ? COLS - 3 : 30;
+		draw_text(2, row, e.left.c_str(), e.colour, left_max);
+		if (!e.right.empty())
+			draw_text(34, row, e.right.c_str(), col_text, COLS - 35);
 	}
 
-	if ((int)items.size() > LIST_ROWS)
+	if ((int)rows.size() > LIST_ROWS)
 	{
 		char pos[32];
-		snprintf(pos, sizeof(pos), "%d/%d", sel + 1, (int)items.size());
+		snprintf(pos, sizeof(pos), "%d/%d", sel + 1, (int)rows.size());
 		draw_text(COLS - 1 - (int)strlen(pos), 1, pos, col_dim);
 	}
 
 	if (!status.empty())
 		draw_text(1, STATUS_ROW, status.c_str(), status_err ? col_err : col_text, COLS - 2);
 
-	draw_text(1, HELP_ROW, "X open   O back   L1/R1 page", col_dim);
+	draw_text(1, HELP_ROW, help, col_dim);
 
 	ps2_video_frame(GFX.Screen, GFX.RealPPL, MENU_W, MENU_H);
 	ps2_video_sync(); /* menu pacing: one step per vblank */
 }
+
+static void keep_visible(int sel, int &top)
+{
+	if (sel < top)
+		top = sel;
+	if (sel >= top + LIST_ROWS)
+		top = sel - LIST_ROWS + 1;
+}
+
+void ps2_menu_message(const char *title, const char *text)
+{
+	init_colours();
+
+	std::vector<Row> rows;
+	rows.push_back({ text, "", col_text });
+
+	struct stat st;
+	if (stat(text, &st) == 0 && S_ISREG(st.st_mode))
+	{
+		char size[48];
+		snprintf(size, sizeof(size), "%.1f MB - this can take a while from USB",
+			 st.st_size / (1024.0 * 1024.0));
+		rows.push_back({ size, "", col_dim });
+	}
+
+	render_list(title, "", rows, -1, 0, NULL, "", false, "");
+	/* Second frame: the vblank flip shows the first one; both buffers then
+	 * hold the message while the caller blocks. */
+	render_list(title, "", rows, -1, 0, NULL, "", false, "");
+}
+
+/* ---- settings ----------------------------------------------------- */
+
+static const char *video_mode_names[PS2_VIDEO_MODE_COUNT] = {
+	"Auto (console region)", "NTSC 480i", "PAL 576i", "NTSC 240p", "PAL 288p", "480p (component)"
+};
+static const char *filter_names[PS2_FILTER_COUNT] = { "Smooth", "Sharp" };
+
+enum
+{
+	SET_VIDEO,
+	SET_FILTER,
+	SET_FRAMESKIP,
+	SET_FPS,
+	SET_SOUND,
+	SET_DEFAULTS,
+	SET_BACK,
+	SET_COUNT
+};
+
+static std::string frameskip_name(int fs)
+{
+	if (fs == PS2_FRAMESKIP_AUTO)
+		return "Auto";
+	char b[8];
+	snprintf(b, sizeof(b), "%d", fs);
+	return b;
+}
+
+static int wrap(int v, int lo, int hi)
+{
+	return v < lo ? hi : (v > hi ? lo : v);
+}
+
+/* After a video mode change: keep it only if the user can see this and
+ * presses Cross within ~10 s; anything else restores the old mode. */
+static bool confirm_video_mode(int old_mode)
+{
+	wait_release();
+	for (int frames = 600; frames > 0; frames--)
+	{
+		std::vector<Row> rows;
+		char msg[64];
+		snprintf(msg, sizeof(msg), "Reverting in %d s", frames / 60 + 1);
+		rows.push_back({ "Keep this video mode?", "", col_title });
+		rows.push_back({ "Press X to keep it.", "", col_text });
+		rows.push_back({ msg, "", col_dim });
+		render_list("Video mode", video_mode_names[ps2_cfg.video_mode], rows, -1, 0,
+			    NULL, "", false, "X keep   O revert");
+
+		unsigned b = poll_buttons();
+		if (b & PAD_CROSS)
+			return true;
+		if (b & (PAD_CIRCLE | PAD_TRIANGLE))
+			break;
+	}
+
+	ps2_cfg.video_mode = old_mode;
+	ps2_video_set_mode(old_mode);
+	return false;
+}
+
+void ps2_menu_settings(void)
+{
+	init_colours();
+	wait_release();
+
+	int sel = 0, top = 0;
+	std::string status;
+	bool status_err = false;
+
+	while (1)
+	{
+		std::vector<Row> rows(SET_COUNT);
+		rows[SET_VIDEO] = { "Video mode", std::string("< ") + video_mode_names[ps2_cfg.video_mode] + " >", col_text };
+		rows[SET_FILTER] = { "Screen filter", std::string("< ") + filter_names[ps2_cfg.filter] + " >", col_text };
+		rows[SET_FRAMESKIP] = { "Frame skip", "< " + frameskip_name(ps2_cfg.frameskip) + " >", col_text };
+		rows[SET_FPS] = { "Show FPS", ps2_cfg.show_fps ? "< On >" : "< Off >", col_text };
+		rows[SET_SOUND] = { "Sound", ps2_cfg.sound ? "< On >" : "< Off >", col_text };
+		rows[SET_DEFAULTS] = { "Reset to defaults", "", col_dir };
+		rows[SET_BACK] = { "Back", "", col_dir };
+
+		keep_visible(sel, top);
+		render_list("Settings", std::string(ps2_base_dir()) + "/ps2.cfg", rows, sel, top,
+			    NULL, status, status_err, "Left/Right change   X select   O back");
+
+		unsigned b = poll_buttons();
+		int dir = (b & PAD_RIGHT) ? 1 : (b & PAD_LEFT) ? -1 : 0;
+		bool activate = (b & PAD_CROSS) != 0;
+
+		if (b & PAD_UP)
+			sel = wrap(sel - 1, 0, SET_COUNT - 1);
+		else if (b & PAD_DOWN)
+			sel = wrap(sel + 1, 0, SET_COUNT - 1);
+		else if (b & (PAD_CIRCLE | PAD_TRIANGLE) || (activate && sel == SET_BACK))
+			break;
+		else if (dir || activate)
+		{
+			if (activate && dir == 0)
+				dir = 1;
+			status.clear();
+			status_err = false;
+
+			switch (sel)
+			{
+			case SET_VIDEO:
+			{
+				int old = ps2_cfg.video_mode;
+				ps2_cfg.video_mode = wrap(old + dir, 0, PS2_VIDEO_MODE_COUNT - 1);
+				ps2_video_set_mode(ps2_cfg.video_mode);
+				if (!confirm_video_mode(old))
+					status = "Video mode reverted";
+				wait_release();
+				break;
+			}
+			case SET_FILTER:
+				ps2_cfg.filter = wrap(ps2_cfg.filter + dir, 0, PS2_FILTER_COUNT - 1);
+				ps2_video_set_filter(ps2_cfg.filter);
+				break;
+			case SET_FRAMESKIP:
+				ps2_cfg.frameskip = wrap(ps2_cfg.frameskip + dir, PS2_FRAMESKIP_AUTO, 4);
+				break;
+			case SET_FPS:
+				ps2_cfg.show_fps = !ps2_cfg.show_fps;
+				break;
+			case SET_SOUND:
+				ps2_cfg.sound = !ps2_cfg.sound;
+				break;
+			case SET_DEFAULTS:
+				if (activate)
+				{
+					std::string keep_dir = ps2_cfg.last_dir;
+					int old_mode = ps2_cfg.video_mode;
+					ps2_config_defaults();
+					ps2_cfg.last_dir = keep_dir;
+					ps2_video_set_filter(ps2_cfg.filter);
+					if (ps2_cfg.video_mode != old_mode)
+					{
+						ps2_video_set_mode(ps2_cfg.video_mode);
+						if (!confirm_video_mode(old_mode))
+							status = "Video mode reverted";
+						wait_release();
+					}
+					if (status.empty())
+						status = "Defaults restored";
+				}
+				break;
+			}
+			ps2_config_apply_core();
+		}
+	}
+
+	if (!ps2_config_save())
+	{
+		/* Saving is best effort (read-only device): settings still apply
+		 * for this session. */
+		printf("settings: not saved\n");
+	}
+	wait_release();
+}
+
+/* ---- in-game menu ------------------------------------------------- */
+
+enum
+{
+	PAUSE_ITEM_RESUME,
+	PAUSE_ITEM_SAVE,
+	PAUSE_ITEM_LOAD,
+	PAUSE_ITEM_RESET,
+	PAUSE_ITEM_SETTINGS,
+	PAUSE_ITEM_ROM,
+	PAUSE_ITEM_COUNT
+};
+
+int ps2_menu_pause(void)
+{
+	init_colours();
+	wait_release();
+
+	int sel = 0, top = 0;
+	std::string status;
+	bool status_err = false;
+	std::string state_file = S9xGetFilename(".000", SNAPSHOT_DIR);
+	std::string game = Memory.ROMFilename.substr(Memory.ROMFilename.rfind('/') + 1);
+
+	while (1)
+	{
+		std::vector<Row> rows(PAUSE_ITEM_COUNT);
+		rows[PAUSE_ITEM_RESUME] = { "Resume", "", col_text };
+		rows[PAUSE_ITEM_SAVE] = { "Save state", "", col_text };
+		rows[PAUSE_ITEM_LOAD] = { "Load state", "", col_text };
+		rows[PAUSE_ITEM_RESET] = { "Reset game", "", col_text };
+		rows[PAUSE_ITEM_SETTINGS] = { "Settings", "", col_dir };
+		rows[PAUSE_ITEM_ROM] = { "Load another ROM", "", col_dir };
+
+		keep_visible(sel, top);
+		render_list("Paused", game, rows, sel, top, NULL, status, status_err,
+			    "X select   O resume");
+
+		unsigned b = poll_buttons();
+		if (b & PAD_UP)
+			sel = wrap(sel - 1, 0, PAUSE_ITEM_COUNT - 1);
+		else if (b & PAD_DOWN)
+			sel = wrap(sel + 1, 0, PAUSE_ITEM_COUNT - 1);
+		else if (b & (PAD_CIRCLE | PAD_TRIANGLE))
+			break;
+		else if (b & PAD_CROSS)
+		{
+			status_err = false;
+			switch (sel)
+			{
+			case PAUSE_ITEM_RESUME:
+				wait_release();
+				return PS2_PAUSE_RESUME;
+			case PAUSE_ITEM_SAVE:
+				if (S9xFreezeGame(state_file.c_str()))
+					status = "State saved";
+				else
+					status = "Could not save " + state_file, status_err = true;
+				break;
+			case PAUSE_ITEM_LOAD:
+				if (S9xUnfreezeGame(state_file.c_str()))
+				{
+					wait_release();
+					return PS2_PAUSE_RESUME;
+				}
+				status = "No saved state", status_err = true;
+				break;
+			case PAUSE_ITEM_RESET:
+				S9xSoftReset();
+				wait_release();
+				return PS2_PAUSE_RESUME;
+			case PAUSE_ITEM_SETTINGS:
+				ps2_menu_settings();
+				break;
+			case PAUSE_ITEM_ROM:
+				wait_release();
+				return PS2_PAUSE_LOAD_ROM;
+			}
+		}
+	}
+
+	wait_release();
+	return PS2_PAUSE_RESUME;
+}
+
+/* ---- browser ------------------------------------------------------- */
 
 std::string ps2_menu_pick_rom(const char *start_dir, const char *message,
 			      const char *select_name)
@@ -277,6 +582,7 @@ std::string ps2_menu_pick_rom(const char *start_dir, const char *message,
 		return "";
 
 	init_colours();
+	wait_release();
 
 	std::string cwd;
 	std::vector<Entry> items;
@@ -304,18 +610,26 @@ std::string ps2_menu_pick_rom(const char *start_dir, const char *message,
 
 	while (1)
 	{
-		/* Keep sel visible. */
-		if (sel < top)
-			top = sel;
-		if (sel >= top + LIST_ROWS)
-			top = sel - LIST_ROWS + 1;
+		keep_visible(sel, top);
 
-		render(cwd, items, sel, top, status, status_err);
+		std::vector<Row> rows;
+		for (const Entry &e : items)
+			rows.push_back({ e.dir && !cwd.empty() ? e.name + "/" : e.name, "", e.dir ? col_dir : col_text });
+
+		render_list("Snes9x " VERSION " for PS2 - select a ROM", cwd.empty() ? "Devices" : cwd,
+			    rows, sel, top,
+			    cwd.empty() ? "(no storage devices found)" : "(no ROMs or folders here)",
+			    status, status_err, "X open   O back   L1/R1 page   START settings");
 
 		unsigned b = poll_buttons();
 		int n = (int)items.size();
 
-		if (b & PAD_UP && n)
+		if (b & PAD_START)
+		{
+			ps2_menu_settings();
+			wait_release();
+		}
+		else if (b & PAD_UP && n)
 			sel = (sel + n - 1) % n;
 		else if (b & PAD_DOWN && n)
 			sel = (sel + 1) % n;
@@ -344,7 +658,12 @@ std::string ps2_menu_pick_rom(const char *start_dir, const char *message,
 				}
 			}
 			else
+			{
+				ps2_cfg.last_dir = cwd;
+				ps2_config_save();
+				wait_release();
 				return cwd + e.name;
+			}
 		}
 		else if (b & (PAD_CIRCLE | PAD_TRIANGLE))
 		{

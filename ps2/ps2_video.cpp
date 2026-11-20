@@ -39,11 +39,27 @@
 
 #define FB_WIDTH  640
 
-/* Display height follows the console's video region: graph_initialize
- * programs a 640x448 (NTSC) or 640x512 (PAL) display area. A 448-line
- * framebuffer on PAL leaves a black bar at the bottom. */
+/* Video modes (ps2_video.h). Framebuffer height = displayed lines:
+ * interlaced FIELD modes show both fields (448/512), progressive modes
+ * show one frame of 224/256 lines (240p/288p) or 480 (480p). */
+struct ModeSpec
+{
+	int crt, interlace, ffmd, flicker, height;
+};
+
+static const ModeSpec mode_specs[PS2_VIDEO_MODE_COUNT] = {
+	{ 0, 0, 0, 0, 0 }, /* AUTO: resolved from the console region */
+	{ GRAPH_MODE_NTSC, GRAPH_MODE_INTERLACED, GRAPH_MODE_FIELD, GRAPH_ENABLE, 448 },
+	{ GRAPH_MODE_PAL, GRAPH_MODE_INTERLACED, GRAPH_MODE_FIELD, GRAPH_ENABLE, 512 },
+	{ GRAPH_MODE_NTSC, GRAPH_MODE_NONINTERLACED, GRAPH_MODE_FRAME, GRAPH_DISABLE, 224 },
+	{ GRAPH_MODE_PAL, GRAPH_MODE_NONINTERLACED, GRAPH_MODE_FRAME, GRAPH_DISABLE, 256 },
+	{ GRAPH_MODE_HDTV_480P, GRAPH_MODE_NONINTERLACED, GRAPH_MODE_FRAME, GRAPH_DISABLE, 480 },
+};
+
 static int fb_height = 448;
 #define FB_HEIGHT fb_height
+static int cur_mode = PS2_VIDEO_AUTO;   /* as requested (may be AUTO) */
+static int cur_filter = PS2_FILTER_SMOOTH;
 
 /* Largest SNES frame the core renders: 512 wide x 478 high (PAL interlace).
  * 512*480 PSMCT16 = 30720 qwords: fits one IMAGE GIF tag (NLOOP <= 0x7FFF)
@@ -152,8 +168,8 @@ static void setup_texture_state(void)
 
 	lod.calculation = LOD_USE_K;
 	lod.max_level = 0;
-	lod.mag_filter = LOD_MAG_LINEAR;
-	lod.min_filter = LOD_MIN_LINEAR;
+	lod.mag_filter = cur_filter == PS2_FILTER_SHARP ? LOD_MAG_NEAREST : LOD_MAG_LINEAR;
+	lod.min_filter = cur_filter == PS2_FILTER_SHARP ? LOD_MIN_NEAREST : LOD_MIN_LINEAR;
 	lod.l = 0;
 	lod.k = 0;
 
@@ -204,15 +220,27 @@ static void fill_buffer(int target, int r, int g, int b)
 	draw_wait_finish();
 }
 
-void ps2_video_init(void)
+static int resolve_mode(int mode)
 {
-	memset(fb, 0, sizeof(fb));
-	memset(&zb, 0, sizeof(zb));
-	memset(&texbuf, 0, sizeof(texbuf));
+	if (mode <= PS2_VIDEO_AUTO || mode >= PS2_VIDEO_MODE_COUNT)
+		return graph_get_region() == GRAPH_MODE_PAL ? PS2_VIDEO_PAL_576I : PS2_VIDEO_NTSC_480I;
+	return mode;
+}
 
-	fb_height = (graph_get_region() == GRAPH_MODE_PAL) ? 512 : 448;
+/* (Re)program the CRTC and VRAM layout for a mode. Safe to call at
+ * runtime: the vblank flip is parked first so it never shows a buffer
+ * from the old layout. */
+static void apply_mode(int mode)
+{
+	const ModeSpec &m = mode_specs[resolve_mode(mode)];
 
-	/* Two 32-bit 640xH framebuffers (2 x 1.1-1.3 MB), no z-buffer. */
+	DIntr();
+	pending = -1;
+	EIntr();
+
+	fb_height = m.height;
+
+	graph_vram_clear();
 	for (int i = 0; i < 2; i++)
 	{
 		fb[i].width = FB_WIDTH;
@@ -221,23 +249,48 @@ void ps2_video_init(void)
 		fb[i].psm = GS_PSM_32;
 		fb[i].address = graph_vram_allocate(FB_WIDTH, FB_HEIGHT, GS_PSM_32, GRAPH_ALIGN_PAGE);
 
-		/* graph_initialize uses the flicker-filtered pair: DISPFB2 reads
-		 * one line lower than DISPFB1. The flip must keep that. */
+		/* With the flicker filter both read circuits are blended and
+		 * circuit 2 reads one line lower. Without it, graph_enable_output
+		 * shows circuit 2 alone, so it must read line 0. */
 		dispfb1[i] = GS_SET_DISPFB(fb[i].address >> 11, fb[i].width >> 6, fb[i].psm, 0, 0);
-		dispfb2[i] = GS_SET_DISPFB(fb[i].address >> 11, fb[i].width >> 6, fb[i].psm, 0, 1);
+		dispfb2[i] = GS_SET_DISPFB(fb[i].address >> 11, fb[i].width >> 6, fb[i].psm, 0, m.flicker ? 1 : 0);
 	}
-
-	zb.enable = DRAW_DISABLE;
-	zb.zsm = GS_ZBUF_32;
-	zb.mask = 1;
-	zb.address = 0;
 
 	/* Texture in VRAM: PSMCT16 (BGR555 from the core), block-aligned. */
 	texbuf.width = TEX_MAX_W;
 	texbuf.psm = GS_PSM_16;
 	texbuf.address = graph_vram_allocate(TEX_MAX_W, TEX_MAX_H, GS_PSM_16, GRAPH_ALIGN_BLOCK);
 
-	graph_initialize(fb[0].address, fb[0].width, fb[0].height, fb[0].psm, 0, 0);
+	graph_set_mode(m.interlace, m.crt, m.ffmd, m.flicker);
+	graph_set_screen(0, 0, FB_WIDTH, FB_HEIGHT);
+	graph_set_bgcolor(0, 0, 0);
+	*GS_REG_DISPFB1 = dispfb1[0];
+	*GS_REG_DISPFB2 = dispfb2[0];
+	graph_enable_output();
+
+	setup_drawing_environment();
+	setup_texture_state();
+
+	/* Both buffers start black instead of whatever VRAM held. */
+	fill_buffer(0, 0, 0, 0);
+	fill_buffer(1, 0, 0, 0);
+	displayed = 0;
+	pending = -1;
+}
+
+void ps2_video_init(int mode, int filter)
+{
+	memset(fb, 0, sizeof(fb));
+	memset(&zb, 0, sizeof(zb));
+	memset(&texbuf, 0, sizeof(texbuf));
+
+	cur_mode = mode;
+	cur_filter = filter;
+
+	zb.enable = DRAW_DISABLE;
+	zb.zsm = GS_ZBUF_32;
+	zb.mask = 1;
+	zb.address = 0;
 
 	dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
 	/* Arm CPCOND0 for the GIF channel. Without this, dma_wait_fast()
@@ -245,23 +298,35 @@ void ps2_video_init(void)
 	dma_channel_fast_waits(DMA_CHANNEL_GIF);
 	dma_channel_wait(DMA_CHANNEL_GIF, 0);
 
-	setup_drawing_environment();
-	setup_texture_state();
-
 	frame_packet = packet_init(FRAME_PACKET_QW, PACKET_NORMAL);
 	solid_packet = packet_init(16, PACKET_NORMAL);
 	if (!frame_packet || !solid_packet)
 		return;
 
-	/* Both buffers start black instead of whatever VRAM held. */
-	fill_buffer(0, 0, 0, 0);
-	fill_buffer(1, 0, 0, 0);
-	displayed = 0;
-	pending = -1;
+	apply_mode(mode);
 
 	vsync_id = graph_add_vsync_handler(vblank_flip);
 
 	video_ready = 1;
+}
+
+void ps2_video_set_mode(int mode)
+{
+	cur_mode = mode;
+	if (video_ready)
+		apply_mode(mode);
+}
+
+int ps2_video_get_mode(void)
+{
+	return cur_mode;
+}
+
+void ps2_video_set_filter(int filter)
+{
+	cur_filter = filter;
+	if (video_ready)
+		setup_texture_state();
 }
 
 void ps2_video_deinit(void)

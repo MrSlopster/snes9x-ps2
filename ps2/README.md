@@ -92,6 +92,17 @@ needs it is skipped (no audio / no pads) rather than hanging boot.
    | L1/R1, left/right | page                      |
    | Cross           | open folder / load ROM      |
    | Circle/Triangle | parent folder / device list |
+   | Start           | settings                    |
+
+4. Settings (Start in the browser, or from the in-game menu) are saved to
+   `<base>/snes9x/ps2.cfg`: video mode (Auto, NTSC 480i, PAL 576i, NTSC
+   240p, PAL 288p, 480p over component), screen filter (smooth/sharp), frame
+   skip (Auto, 0-4), show FPS, sound on/off. A new video mode must be
+   confirmed with Cross within 10 s or it reverts.
+
+5. In game, hold **Select+Start** for the in-game menu: resume, save/load
+   state (`<base>/snes9x/saves/<game>.000`), reset, settings, load another
+   ROM (SRAM is saved first).
 
 ### Controls
 

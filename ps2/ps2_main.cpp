@@ -19,6 +19,7 @@
 #include "ps2_controls.h"
 #include "ps2_iop.h"
 #include "ps2_menu.h"
+#include "ps2_config.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
@@ -84,6 +85,7 @@ static void ps2_samples_available(void *)
 
 extern "C" {
 #include <kernel.h>
+#include <libpad.h>
 }
 
 bool8 S9xInitUpdate(void)
@@ -125,11 +127,22 @@ void S9xSyncSpeed(void)
 			IPPU.RenderThisFrame = FALSE;
 		}
 
-		if (ps2_sound_ok && Settings.SoundSync)
+		if (ps2_sound_ok && Settings.SoundSync && !Settings.Mute)
 			return;
 	}
 
-	if (Settings.SoundSync && ps2_sound_ok)
+	/* A fixed frame skip applies whatever paces emulation: render 1 of
+	 * every SkipFrames frames. AUTO needs the wall-clock path below. */
+	if (Settings.SkipFrames != AUTO_FRAMERATE)
+	{
+		IPPU.RenderThisFrame = (++IPPU.SkippedFrames >= Settings.SkipFrames) ? TRUE : FALSE;
+		if (IPPU.RenderThisFrame)
+			IPPU.SkippedFrames = 0;
+	}
+
+	/* audsrv's blocking write paces emulation only while samples are
+	 * actually written: muted, fall through to wall-clock pacing. */
+	if (Settings.SoundSync && ps2_sound_ok && !Settings.Mute)
 		return;
 
 	static struct timespec next1 = { 0, 0 };
@@ -340,13 +353,21 @@ int main(int argc, char **argv)
 	 * color-coded screen instead of an invisible black screen on a TV
 	 * without a ps2link console (colors: yellow=alloc, magenta=no ROM,
 	 * red=ROM load failed, blue=graphics init failed). */
-	ps2_video_init();
+	ps2_video_init(PS2_VIDEO_AUTO, PS2_FILTER_SMOOTH);
 
 	/* IOP drivers before anything touches files, pads or audio. */
 	ps2_iop_init(argc > 0 ? argv[0] : NULL);
 
 	ps2_dirs_init(argc > 0 ? argv[0] : NULL);
 	ps2_apply_settings();
+
+	/* Saved settings live next to the snes9x data on the base device. */
+	ps2_config_load();
+	if (ps2_cfg.video_mode != PS2_VIDEO_AUTO)
+		ps2_video_set_mode(ps2_cfg.video_mode);
+	if (ps2_cfg.filter != PS2_FILTER_SMOOTH)
+		ps2_video_set_filter(ps2_cfg.filter);
+	ps2_config_apply_core();
 
 	CPU.Flags = 0;
 	S9xDeleteCheats();
@@ -378,8 +399,12 @@ int main(int argc, char **argv)
 	 * cannot be used: fall back to the first ROM in <base>/roms. */
 	std::string rom_path = (argc > 1) ? argv[1] : "";
 	std::string load_error, failed_name;
-	std::string start_dir = std::string(ps2_base_dir()) + "/roms";
+	std::string start_dir = ps2_cfg.last_dir.empty()
+					? std::string(ps2_base_dir()) + "/roms"
+					: ps2_cfg.last_dir;
 
+	while (1) /* one iteration per game session */
+	{
 	while (1)
 	{
 		if (rom_path.empty())
@@ -404,6 +429,7 @@ int main(int argc, char **argv)
 		}
 
 		printf("Loading ROM: %s\n", rom_path.c_str());
+		ps2_menu_message("Loading", rom_path.c_str());
 		if (Memory.LoadROM(rom_path.c_str()))
 			break;
 
@@ -428,18 +454,43 @@ int main(int argc, char **argv)
 
 	Settings.StopEmulation = FALSE;
 
-	S9xSetSoundMute(FALSE);
+	S9xSetSoundMute(!ps2_cfg.sound);
 
 	printf("Starting emulation\n");
 
+	bool load_other = false;
 	while (!Settings.StopEmulation)
 	{
+		/* Select+Start: in-game menu. */
+		if ((ps2_pad_held(0) & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START))
+		{
+			S9xSetSoundMute(TRUE);
+			int action = ps2_menu_pause();
+			S9xSetSoundMute(!ps2_cfg.sound);
+			if (action == PS2_PAUSE_LOAD_ROM)
+			{
+				load_other = true;
+				break;
+			}
+		}
+
 		ps2_input_poll();
 		S9xMainLoop();
 	}
 
 	printf("Saving SRAM: %s\n", S9xGetFilename(".srm", SRAM_DIR).c_str());
 	Memory.SaveSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+
+	if (!load_other)
+		break;
+
+	/* Back to the browser in the current game's folder. */
+	S9xSetSoundMute(TRUE);
+	start_dir = Memory.ROMFilename.substr(0, Memory.ROMFilename.rfind('/') + 1);
+	failed_name = Memory.ROMFilename.substr(Memory.ROMFilename.rfind('/') + 1);
+	load_error.clear();
+	rom_path.clear();
+	} /* game session */
 
 	ps2_sound_ok = false;
 	S9xGraphicsDeinit();

@@ -1,5 +1,6 @@
 #pragma once
-/* On-screen ROM browser: USB (massN:), memory cards (mcN:) and host:.
+/* On-screen menus: ROM browser (massN:, mcN:, host:), settings, in-game
+ * menu.
  * Needs S9xGraphicsInit (draws into GFX.Screen), ps2_video_init and
  * ps2_input_init. */
 
@@ -12,3 +13,19 @@
  * only if no pad is available to drive the menu. */
 std::string ps2_menu_pick_rom(const char *start_dir, const char *message,
 			      const char *select_name = NULL);
+
+/* Settings screen: edits ps2_cfg, applies changes live, saves on exit. */
+void ps2_menu_settings(void);
+
+/* In-game menu (Select+Start): resume, save/load state, reset, settings,
+ * load another ROM. */
+enum
+{
+	PS2_PAUSE_RESUME,
+	PS2_PAUSE_LOAD_ROM
+};
+int ps2_menu_pause(void);
+
+/* One static screen (e.g. "Loading <file> (6.0 MB)") shown while the
+ * caller does something slow. Adds the file size when 'text' is a file. */
+void ps2_menu_message(const char *title, const char *text);
