@@ -305,25 +305,15 @@ static void keep_visible(int sel, int &top)
 		top = sel - LIST_ROWS + 1;
 }
 
-void ps2_menu_message(const char *title, const char *text)
+void ps2_menu_status(const char *title, const char *text, const char *detail)
 {
 	init_colours();
 
 	std::vector<Row> rows;
 	rows.push_back({ text, "", col_text });
+	if (detail && detail[0])
+		rows.push_back({ detail, "", col_dim });
 
-	struct stat st;
-	if (stat(text, &st) == 0 && S_ISREG(st.st_mode))
-	{
-		char size[48];
-		snprintf(size, sizeof(size), "%.1f MB - this can take a while from USB",
-			 st.st_size / (1024.0 * 1024.0));
-		rows.push_back({ size, "", col_dim });
-	}
-
-	render_list(title, "", rows, -1, 0, NULL, "", false, "");
-	/* Second frame: the vblank flip shows the first one; both buffers then
-	 * hold the message while the caller blocks. */
 	render_list(title, "", rows, -1, 0, NULL, "", false, "");
 }
 

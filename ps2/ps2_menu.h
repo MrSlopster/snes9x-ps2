@@ -26,6 +26,6 @@ enum
 };
 int ps2_menu_pause(void);
 
-/* One static screen (e.g. "Loading <file> (6.0 MB)") shown while the
- * caller does something slow. Adds the file size when 'text' is a file. */
-void ps2_menu_message(const char *title, const char *text);
+/* Progress screen: title, a main line and a detail line; draws one frame
+ * per call (cheap enough to call per read chunk). */
+void ps2_menu_status(const char *title, const char *text, const char *detail);

@@ -20,6 +20,7 @@
 #include "ps2_iop.h"
 #include "ps2_menu.h"
 #include "ps2_config.h"
+#include "ps2_rom.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
@@ -429,8 +430,7 @@ int main(int argc, char **argv)
 		}
 
 		printf("Loading ROM: %s\n", rom_path.c_str());
-		ps2_menu_message("Loading", rom_path.c_str());
-		if (Memory.LoadROM(rom_path.c_str()))
+		if (ps2_load_rom(rom_path.c_str()))
 			break;
 
 		printf("Error opening ROM: %s\n", rom_path.c_str());
@@ -450,7 +450,12 @@ int main(int argc, char **argv)
 
 	S9xDeleteCheats();
 	S9xCheatsEnable();
+	ps2_menu_status("Loading", Memory.ROMFilename.c_str(), "Loading save data...");
 	Memory.LoadSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+
+	/* Stays on screen until the first emulated frame replaces it: if it
+	 * never goes away, emulation (or the first audio push) is stuck. */
+	ps2_menu_status("Loading", Memory.ROMFilename.c_str(), "Starting game...");
 
 	Settings.StopEmulation = FALSE;
 

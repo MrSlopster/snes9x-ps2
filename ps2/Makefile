@@ -29,7 +29,7 @@ IRX_OBJS = $(IRX_MODULES:%=irx_%.o)
 
 EE_OBJS = \
 	$(IRX_OBJS) ps2_iop.o \
-	ps2_main.o ps2_menu.o ps2_config.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \
