@@ -7,6 +7,12 @@ I_GetSystemTime
 I_SysClock2USec
 thbase_IMPORTS_end
 
+sysclib_IMPORTS_start
+I_memcpy
+I_memcmp
+I_memset
+sysclib_IMPORTS_end
+
 sifcmd_IMPORTS_start
 I_sceSifInitRpc
 I_sceSifRegisterRpc
@@ -16,6 +22,9 @@ sifcmd_IMPORTS_end
 
 libsd_IMPORTS_start
 I_sceSdSetParam
+I_sceSdGetParam
+I_sceSdGetAddr
+I_sceSdGetSwitch
 I_sceSdSetCoreAttr
 I_sceSdSetAddr
 I_sceSdSetSwitch

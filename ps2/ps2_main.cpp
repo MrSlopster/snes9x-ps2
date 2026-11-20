@@ -102,6 +102,13 @@ static void ps2_sound_resume(void)
 	ps2_spu_enable(fast);
 	fast = ps2_spu_enabled();
 	S9xSetSoundMute((fast || ps2_cfg.sound == PS2_SOUND_OFF) ? TRUE : FALSE);
+
+	char line[160];
+	snprintf(line, sizeof(line), "SOUND setting=%d active=%s (audsrv device %d, snesspu module %d, %s)", ps2_cfg.sound,
+		 fast ? "fast" : Settings.Mute ? "off" : "accurate", ps2_sound_ok ? 1 : 0, ps2_spu_available() ? 1 : 0,
+		 ps2_spu_status());
+	printf("%s\n", line);
+	ps2_net_log(line);
 }
 
 /* Silence for menus and between games. */

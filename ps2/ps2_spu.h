@@ -17,6 +17,8 @@ bool ps2_spu_available(void);
  * ps2_spu_silence(). */
 void ps2_spu_enable(bool on);
 bool ps2_spu_enabled(void);
+/* One line on how the last ps2_spu_enable(true) went, for the log. */
+const char *ps2_spu_status(void);
 
 /* Once per emulated frame: send the frame's events. */
 void ps2_spu_frame(void);

@@ -26,6 +26,10 @@ IRX_ID("snesspu", 1, 0);
 
 static int rpc_buffer[(SNESSPU_UPLOAD_MAX + 64) / 4] __attribute__((aligned(64)));
 static unsigned int rpc_result[4];
+static snesspu_status st;
+static u8 last_upload_head[64] __attribute__((aligned(64)));
+static u8 readback_buf[64] __attribute__((aligned(64)));
+static unsigned int last_upload_addr;
 static SifRpcDataQueue_t rpc_queue;
 static SifRpcServerData_t rpc_server;
 
@@ -99,6 +103,7 @@ static void apply_due(void)
 		{
 		case SNESSPU_EV_KON:
 			sceSdSetAddr(CORE | (v << 1) | SD_VADDR_SSA, (unsigned int)e->value * 16);
+			st.key_ons++;
 			kon |= bit;
 			koff &= ~bit;
 			break;
@@ -138,6 +143,7 @@ static void apply_due(void)
 			break;
 		}
 		q_read++;
+		st.events_applied++;
 	}
 
 	if (koff)
@@ -198,7 +204,11 @@ static void take_events(const snesspu_batch *b, const snesspu_event *ev)
 	for (i = 0; i < count; i++)
 	{
 		if (q_write - q_read >= QUEUE_SIZE)
+		{
+			st.events_dropped += count - i;
 			break; /* full: the ticker is not keeping up; drop */
+		}
+		st.events_in++;
 		queue[q_write & (QUEUE_SIZE - 1)] = ev[i];
 		q_write++;
 	}
@@ -225,7 +235,36 @@ static int upload(const snesspu_upload *u, u8 *data)
 	if (sceSdVoiceTrans(0, SD_TRANS_WRITE | SD_TRANS_MODE_DMA, data, (u32 *)u->addr, u->size) < 0)
 		return -2;
 	sceSdVoiceTransStatus(0, 1); /* wait */
+	memcpy(last_upload_head, data, 64);
+	last_upload_addr = u->addr;
 	return 0;
+}
+
+static void fill_status(void)
+{
+	int v;
+	st.play_pos = play_pos;
+	st.newest = newest;
+	st.mvol = ((unsigned int)sceSdGetParam(CORE | SD_PARAM_MVOLL) << 16) | (sceSdGetParam(CORE | SD_PARAM_MVOLR) & 0xFFFF);
+	st.core_attr = *(volatile u16 *)(0xBF90019A + (CORE << 10));
+	for (v = 0; v < 8; v++)
+		st.envx[v] = sceSdGetParam(CORE | (v << 1) | SD_VPARAM_ENVX);
+	st.nax[0] = sceSdGetAddr(CORE | (0 << 1) | SD_VADDR_NAX);
+	st.nax[1] = sceSdGetAddr(CORE | (1 << 1) | SD_VADDR_NAX);
+	st.endx = sceSdGetSwitch(CORE | SD_SWITCH_ENDX);
+
+	/* Is the sample data really in SPU2 RAM? */
+	if (last_upload_addr)
+	{
+		memset(readback_buf, 0xEE, 64);
+		if (sceSdVoiceTrans(0, SD_TRANS_READ | SD_TRANS_MODE_DMA, readback_buf, (u32 *)last_upload_addr, 64) < 0)
+			st.readback = 3;
+		else
+		{
+			sceSdVoiceTransStatus(0, 1);
+			st.readback = memcmp(readback_buf, last_upload_head, 64) ? 2 : 1;
+		}
+	}
 }
 
 static void *rpc_command(int fno, void *buffer, int length)
@@ -242,8 +281,21 @@ static void *rpc_command(int fno, void *buffer, int length)
 		rpc_result[0] = SNESSPU_VERSION;
 		break;
 	case SNESSPU_CMD_UPLOAD:
-		rpc_result[0] = (unsigned int)upload((const snesspu_upload *)buffer, (u8 *)buffer + sizeof(snesspu_upload));
+	{
+		int res = upload((const snesspu_upload *)buffer, (u8 *)buffer + sizeof(snesspu_upload));
+		if (res)
+		{
+			st.uploads_failed++;
+			st.last_upload_error = res;
+		}
+		else
+			st.uploads_ok++;
+		rpc_result[0] = (unsigned int)res;
 		break;
+	}
+	case SNESSPU_CMD_STATUS:
+		fill_status();
+		return &st;
 	case SNESSPU_CMD_EVENTS:
 		take_events((const snesspu_batch *)buffer, (const snesspu_event *)((u8 *)buffer + sizeof(snesspu_batch)));
 		break;

@@ -17,8 +17,25 @@ enum
 	SNESSPU_CMD_INIT = 1, /* in: none.                        out: u32 version */
 	SNESSPU_CMD_UPLOAD,   /* in: snesspu_upload + data.       out: u32 0 / error */
 	SNESSPU_CMD_EVENTS,   /* in: snesspu_batch + events.      out: none */
-	SNESSPU_CMD_STOP      /* in: none. All voices off, queue dropped. out: none */
+	SNESSPU_CMD_STOP,     /* in: none. All voices off, queue dropped. out: none */
+	SNESSPU_CMD_STATUS    /* in: none.                        out: snesspu_status */
 };
+
+/* Diagnostics. */
+typedef struct
+{
+	unsigned int uploads_ok, uploads_failed;
+	int last_upload_error;
+	unsigned int readback;      /* last upload read back from SPU2 RAM: 1 same, 2 differs, 3 read failed, 0 none yet */
+	unsigned int events_in, events_applied, events_dropped;
+	unsigned int key_ons;
+	unsigned int play_pos, newest;
+	unsigned int mvol;          /* MVOLL << 16 | MVOLR, as read from the chip */
+	unsigned int core_attr;
+	unsigned short envx[8];     /* voice envelope levels, from the chip */
+	unsigned int nax[2];        /* current address of voices 0 and 1 */
+	unsigned int endx;
+} snesspu_status;
 
 #define SNESSPU_VERSION 1
 

@@ -5,6 +5,7 @@
 
 #include <libsd.h>
 #include <sifcmd.h>
+#include <sysclib.h>
 #include <thbase.h>
 
 #endif

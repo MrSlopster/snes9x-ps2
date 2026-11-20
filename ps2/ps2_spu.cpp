@@ -15,6 +15,7 @@ extern "C" {
 #include "ps2_spu_core.h"
 #include "ps2_iop.h"
 #include "ps2_prof.h"
+#include "ps2_net.h"
 
 static SifRpcClientData_t client __attribute__((aligned(64)));
 static unsigned char upload_buf[sizeof(snesspu_upload) + SNESSPU_UPLOAD_MAX + 64] __attribute__((aligned(64)));
@@ -25,6 +26,12 @@ static unsigned int result[16] __attribute__((aligned(64)));
 static bool bound = false;
 static bool core_ready = false;
 static bool enabled = false;
+static char status[64] = "not tried";
+
+const char *ps2_spu_status(void)
+{
+	return status;
+}
 
 bool ps2_spu_available(void)
 {
@@ -105,11 +112,16 @@ void ps2_spu_enable(bool on)
 	if (on)
 	{
 		if (!bind())
+		{
+			snprintf(status, sizeof(status), ps2_iop_spu_ok() ? "RPC bind failed" : "module not loaded");
 			return;
+		}
 		if (!enabled)
 		{
+			result[0] = 0;
 			call(SNESSPU_CMD_INIT, NULL, 0);
 			printf("snesspu: version %u\n", result[0]);
+			snprintf(status, sizeof(status), "init ok, version %u", result[0]);
 		}
 		if (!core_ready)
 		{
@@ -128,6 +140,38 @@ void ps2_spu_enable(bool on)
 	}
 }
 
+/* Once a second on the network log: what the IOP side and the chip say. */
+static void log_status(unsigned now)
+{
+	/* SIF transfers whole 16-byte units into the receive buffer: give it
+	 * room, or the tail lands on whatever the linker put next. */
+	static union
+	{
+		snesspu_status st;
+		unsigned char pad[128];
+	} reply __attribute__((aligned(64)));
+	snesspu_status &st = reply.st;
+	wait_idle();
+	memset(&reply, 0, sizeof(reply));
+	sceSifCallRpc(&client, SNESSPU_CMD_STATUS, 0, NULL, 0, &reply, sizeof(st), NULL, NULL);
+
+	/* Two short lines: PCSX2's log drops long ones. */
+	char line[200];
+	snprintf(line, sizeof(line), "SPU now %u play %u newest %u | ev sent %u in %u applied %u dropped %u | kon %u/%u", now,
+		 st.play_pos, st.newest, spu_core_stats.events, st.events_in, st.events_applied, st.events_dropped,
+		 st.key_ons, spu_core_stats.key_ons);
+	printf("%s\n", line);
+	ps2_net_log(line);
+	snprintf(line, sizeof(line),
+		 "SPU2 samples %u/%ub bad %u | upload ok %u fail %u err %d readback %u | mvol %08x attr %04x endx %06x nax %x %x "
+		 "envx %x %x %x %x %x %x %x %x",
+		 spu_core_stats.samples, spu_core_stats.sample_bytes, spu_core_stats.bad_samples, st.uploads_ok,
+		 st.uploads_failed, st.last_upload_error, st.readback, st.mvol, st.core_attr, st.endx, st.nax[0], st.nax[1],
+		 st.envx[0], st.envx[1], st.envx[2], st.envx[3], st.envx[4], st.envx[5], st.envx[6], st.envx[7]);
+	printf("%s\n", line);
+	ps2_net_log(line);
+}
+
 void ps2_spu_frame(void)
 {
 	if (!enabled)
@@ -138,6 +182,10 @@ void ps2_spu_frame(void)
 		now = S9xAPUFastSoundSync();
 	}
 	spu_core_flush(now);
+
+	static unsigned frames = 0;
+	if (++frames % 60 == 0 && ps2_prof_enabled)
+		log_status(now);
 }
 
 void ps2_spu_silence(void)
