@@ -10,6 +10,28 @@
 #include "stream.h"
 #include "conffile.h"
 #include "ps2_video.h"
+#include "s9x_sound_driver_audsrv.h"
+
+static S9xAudsrvSoundDriver audsrv_driver;
+
+/* Core pushes samples through this callback (registered with
+ * S9xSetSamplesAvailableCallback); we drain the resampler into audsrv. */
+static void ps2_samples_available(void *)
+{
+	if (!Settings.SoundPlaybackRate || Settings.Mute)
+		return;
+
+	static unsigned char sound_buffer[32 * 1024];
+	int samples = S9xGetSampleCount();
+
+	if (samples <= 0)
+		return;
+	if (samples > (int)(sizeof(sound_buffer) / 2))
+		samples = sizeof(sound_buffer) / 2;
+
+	S9xMixSamples(sound_buffer, samples);
+	audsrv_driver.write_samples((int16_t *)sound_buffer, samples);
+}
 
 extern "C" {
 #include <kernel.h>
@@ -56,10 +78,20 @@ void S9xExit(void)
 		;
 }
 
-/* apu.cpp calls this when S9xInitSound needs a device; the audsrv driver
- * (Task 3) will own the real implementation. */
+/* apu.cpp calls this via S9xInitSound: open + configure the audsrv device. */
 bool8 S9xOpenSoundDevice(void)
 {
+	audsrv_driver.init();
+
+	if (!audsrv_driver.open_device(Settings.SoundPlaybackRate, 96))
+	{
+		audsrv_driver.deinit();
+		printf("Failed to open audsrv sound device - muting.\n");
+		return FALSE;
+	}
+
+	S9xSetSamplesAvailableCallback(ps2_samples_available, NULL);
+	audsrv_driver.start();
 	return TRUE;
 }
 
