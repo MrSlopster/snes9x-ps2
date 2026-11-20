@@ -38,11 +38,12 @@ VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
 # IOP drivers embedded in the ELF (loaded by ps2_iop.cpp).
 IRX_MODULES = iomanX fileXio sio2man mcman mcserv padman mtapman libsd audsrv \
 	usbd bdm bdmfs_fatfs usbmass_bd ps2dev9 netman smap
-IRX_OBJS = $(IRX_MODULES:%=irx_%.o)
+# ... and the port's own sound module, built here (snesspu/).
+IRX_OBJS = $(IRX_MODULES:%=irx_%.o) irx_snesspu.o
 
 EE_OBJS = \
 	$(IRX_OBJS) ps2_iop.o \
-	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_net.o ps2_idle.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_net.o ps2_idle.o ps2_spu.o ps2_spu_core.o ps2_brr_adpcm.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \
@@ -65,13 +66,19 @@ $(EE_OBJS): Makefile ../pixform.h ../port.h
 
 # Port sources include each other's headers; rebuild them when any changes.
 PORT_OBJS = $(filter ps2_%.o s9x_sound_driver_audsrv.o,$(EE_OBJS))
-$(PORT_OBJS): $(wildcard ps2_*.h) s9x_sound_driver_audsrv.h
+$(PORT_OBJS): $(wildcard ps2_*.h) s9x_sound_driver_audsrv.h snesspu/snesspu.h
 
 clean:
 	rm -f $(EE_OBJS) $(EE_BIN) $(IRX_OBJS:.o=.c)
+	$(MAKE) -C snesspu clean
 
 irx_%.c: $(PS2SDK)/iop/irx/%.irx
 	$(PS2SDK)/bin/bin2c $< $@ $*_irx
+
+snesspu/snesspu.irx: snesspu/snesspu.c snesspu/snesspu.h snesspu/imports.lst snesspu/Makefile
+	$(MAKE) -C snesspu
+irx_snesspu.c: snesspu/snesspu.irx
+	$(PS2SDK)/bin/bin2c $< $@ snesspu_irx
 
 # apu/bapu objects share basenames with nothing else, but their sources are
 # nested; build them with explicit rules.

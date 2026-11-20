@@ -11,6 +11,7 @@ void ps2_iop_init(const char *argv0);
 bool ps2_iop_pad_ok(void);   /* sio2man + padman */
 bool ps2_iop_mtap_ok(void);  /* mtapman */
 bool ps2_iop_audio_ok(void); /* libsd + audsrv */
+bool ps2_iop_spu_ok(void);   /* + snesspu (fast sound, ps2_spu.cpp) */
 
 /* DEV9 + NETMAN + SMAP for the network log; false without an adapter. */
 bool ps2_iop_load_network(void);

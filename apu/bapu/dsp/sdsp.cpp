@@ -40,6 +40,9 @@ void DSP::save_state (uint8 **ptr)
 void DSP::load_state (uint8 **ptr)
 {
 	spc_dsp.copy_state(ptr, to_dsp_from_state);
+#ifdef _EE
+	spc_dsp.fast_resync();
+#endif
 }
 
 DSP::DSP()

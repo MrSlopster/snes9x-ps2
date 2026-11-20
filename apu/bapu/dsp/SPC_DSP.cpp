@@ -553,6 +553,9 @@ static unsigned const counter_offsets [32] =
 inline void SPC_DSP::init_counter()
 {
 	m.counter = 0;
+#ifdef _EE
+	ee_counter_seen = -1; // nothing worked out yet
+#endif
 }
 
 inline void SPC_DSP::run_counters()
@@ -561,10 +564,60 @@ inline void SPC_DSP::run_counters()
 		m.counter = simple_counter_range - 1;
 }
 
+#ifdef _EE
+/* PS2 port: the same test without a division per call (the R5900 takes 37
+ * cycles for one, and every voice asks every sample). Every rate is 1, 3
+ * or 5 times a power of two, and the offsets go with the factor (0, 1040,
+ * 536), so "(counter + offset) % rate == 0" splits into a mask test and
+ * "(counter + offset) divisible by 3 (or 5)", which is the same for all
+ * voices and is worked out once per sample. Returns zero / non-zero like
+ * the original, not the remainder: callers only test for zero. */
+struct ee_rate_t { unsigned short offset, mask; unsigned char factor; };
+static ee_rate_t ee_rates [32];
+static bool ee_rates_ready = false;
+
+static void ee_init_rates()
+{
+	for ( int r = 0; r < 32; r++ )
+	{
+		unsigned rate = counter_rates [r];
+		ee_rate_t& e = ee_rates [r];
+		e.offset = (unsigned short) counter_offsets [r];
+		if ( r == 0 )
+		{
+			e.factor = 3; // never fires
+			e.mask   = 0;
+			continue;
+		}
+		e.factor = 0;
+		if ( rate % 3 == 0 ) { e.factor = 1; rate /= 3; }
+		else if ( rate % 5 == 0 ) { e.factor = 2; rate /= 5; }
+		e.mask = (unsigned short) (rate - 1); // what is left is a power of two
+	}
+	ee_rates_ready = true;
+}
+
+inline unsigned SPC_DSP::read_counter( int rate )
+{
+	if ( m.counter != ee_counter_seen )
+	{
+		ee_counter_seen = m.counter;
+		ee_not_multiple [0] = 0;
+		ee_not_multiple [1] = (unsigned) (m.counter + 1040) % 3;
+		ee_not_multiple [2] = (unsigned) (m.counter + 536) % 5;
+		ee_not_multiple [3] = 1;
+		if ( !ee_rates_ready )
+			ee_init_rates();
+	}
+	ee_rate_t const& e = ee_rates [rate];
+	return (((unsigned) m.counter + e.offset) & e.mask) | ee_not_multiple [e.factor];
+}
+#else
 inline unsigned SPC_DSP::read_counter( int rate )
 {
 	return ((unsigned) m.counter + counter_offsets [rate]) % counter_rates [rate];
 }
+#endif
 
 
 //// Envelope
@@ -1170,11 +1223,257 @@ PHASE(29) misc_29();                                                 echo_29();\
 PHASE(30) misc_30();V(V3c,0)                                         echo_30();\
 PHASE(31)  V(V4,0)       V(V1,2)\
 
+#ifdef _EE
+
+//// PS2 port: fast mode (see fast_sink_t in SPC_DSP.h)
+
+void SPC_DSP::fast_resync()
+{
+	for ( int i = 0; i < voice_count; i++ )
+	{
+		fast_voice_t& f = fast_voices [i];
+		f.vol_l = f.vol_r = 0;
+		f.pitch = -1;
+		f.on    = false;
+	}
+	for ( int i = 0; i < 5; i++ )
+		fast_global [i] = -0x10000; // never a real value
+	if ( fast_sink )
+		fast_sink->reset( fast_time );
+}
+
+void SPC_DSP::set_fast_sink( const fast_sink_t* sink )
+{
+	fast_sink = sink;
+	fast_resync();
+}
+
+// Report level and pitch changes. Called every fast_scan_period samples.
+void SPC_DSP::fast_scan()
+{
+	int g [5] = { (int8_t) REG(mvoll), (int8_t) REG(mvolr), REG(flg), REG(non), REG(pmon) & 0xFE };
+	if ( g [0] != fast_global [0] || g [1] != fast_global [1] || g [2] != fast_global [2] ||
+			g [3] != fast_global [3] || g [4] != fast_global [4] )
+	{
+		for ( int i = 0; i < 5; i++ )
+			fast_global [i] = g [i];
+		fast_sink->global( fast_time, g [0], g [1], g [2], g [3], g [4] );
+	}
+
+	for ( int i = 0; i < voice_count; i++ )
+	{
+		voice_t const* const v = &m.voices [i];
+		fast_voice_t& f = fast_voices [i];
+
+		int const env = v->env;
+		int l = (int8_t) VREG(v->regs,voll) * env;
+		int r = (int8_t) VREG(v->regs,volr) * env;
+		// The hardware plays the release ramp itself
+		if ( v->env_mode == env_release && env )
+		{
+			l = f.vol_l;
+			r = f.vol_r;
+		}
+		int const pitch = VREG(v->regs,pitchl) + ((VREG(v->regs,pitchh) & 0x3F) << 8);
+		if ( l != f.vol_l || r != f.vol_r || (pitch != f.pitch && (l | r | f.on)) )
+		{
+			f.vol_l = l;
+			f.vol_r = r;
+			f.pitch = pitch;
+			fast_sink->voice( fast_time, i, l, r, pitch );
+		}
+	}
+}
+
+// One output sample: the per-sample work of the 32 clocks (misc_27..30 and
+// voice_V1..V9 for each voice), minus everything that only produces audio.
+void SPC_DSP::fast_sample()
+{
+	// misc_27..30
+	m.t_pmon = REG(pmon) & 0xFE;
+	m.t_non  = REG(non);
+	m.t_eon  = REG(eon);
+	m.t_dir  = REG(dir);
+	if ( (m.every_other_sample ^= 1) != 0 )
+		m.new_kon &= ~m.kon;
+	if ( m.every_other_sample )
+	{
+		m.kon    = m.new_kon;
+		m.t_koff = REG(koff) | m.mute_mask;
+	}
+	run_counters();
+
+	uint8_t* const ram  = m.ram;
+	int const flg       = REG(flg);
+	int       endx      = REG(endx);
+	// Voices that key on or are keyed off on this sample
+	int const kon_now   = m.every_other_sample ? m.kon    : 0;
+	int const koff_now  = m.every_other_sample ? m.t_koff : 0;
+
+	for ( int i = 0; i < voice_count; i++ )
+	{
+		voice_t* const v = &m.voices [i];
+		int pitch = VREG(v->regs,pitchl) + ((VREG(v->regs,pitchh) & 0x3F) << 8);
+
+		// A voice that is silent and released stays that way until its
+		// next key-on: only its sample position still moves (it keeps
+		// setting ENDX as it passes end blocks).
+		if ( !(v->env | v->kon_delay) && v->env_mode == env_release && !(kon_now & v->vbit) )
+		{
+			if ( v->interp_pos >= 0x4000 && (v->brr_offset += 2) >= brr_block_size )
+			{
+				int const header = ram [v->brr_addr];
+				v->brr_addr = (v->brr_addr + brr_block_size) & 0xFFFF;
+				if ( header & 1 )
+				{
+					v->brr_addr = GET_LE16A( &ram [(m.t_dir * 0x100 + VREG(v->regs,srcn) * 4 + 2) & 0xFFFF] );
+					endx |= v->vbit;
+				}
+				v->brr_offset = 1;
+			}
+			v->interp_pos = (v->interp_pos & 0x3FFF) + pitch;
+			if ( v->interp_pos > 0x7FFF )
+				v->interp_pos = 0x7FFF;
+			v->t_envx_out = 0;
+			VREG(v->regs,outx)  = 0;
+			XVREG(v->regs,outx) = 0;
+			VREG(v->regs,envx)  = 0;
+			XVREG(v->regs,envx) = 0;
+			if ( fast_voices [i].on )
+			{
+				fast_voices [i].on = false;
+				fast_sink->key_off( fast_time, i );
+			}
+			continue;
+		}
+
+		fast_voice_t& f = fast_voices [i];
+		int header = ram [v->brr_addr];
+		m.t_adsr0 = VREG(v->regs,adsr0);
+
+		// V3c
+		if ( v->kon_delay )
+		{
+			if ( v->kon_delay == 5 )
+			{
+				// V1, V2: sample directory
+				uint8_t const* entry = &ram [(m.t_dir * 0x100 + VREG(v->regs,srcn) * 4) & 0xFFFF];
+				v->brr_addr   = GET_LE16A( entry );
+				v->brr_offset = 1;
+				v->buf_pos    = 0;
+				header        = 0; // header is ignored on this sample
+				m.kon_check   = true;
+
+				if (take_spc_snapshot)
+				{
+					take_spc_snapshot = 0;
+					if (spc_snapshot_callback)
+						spc_snapshot_callback();
+				}
+
+				// Level 0 until the attack is reported
+				f.vol_l = f.vol_r = 0;
+				f.pitch = pitch;
+				f.on    = true;
+				fast_sink->key_on( fast_time, i, v->brr_addr, GET_LE16A( entry + 2 ) );
+				fast_sink->voice( fast_time, i, 0, 0, pitch );
+			}
+
+			v->env        = 0;
+			v->hidden_env = 0;
+
+			v->interp_pos = 0;
+			if ( --v->kon_delay & 3 )
+				v->interp_pos = 0x4000;
+
+			pitch = 0;
+		}
+
+		v->t_envx_out = (uint8_t) (v->env >> 4);
+
+		// Immediate silence due to end of sample or soft reset
+		if ( flg & 0x80 || (header & 3) == 1 )
+		{
+			v->env_mode = env_release;
+			v->env      = 0;
+		}
+
+		if ( koff_now & v->vbit )
+			v->env_mode = env_release;
+
+		if ( kon_now & v->vbit )
+		{
+			v->kon_delay = 5;
+			v->env_mode  = env_attack;
+		}
+
+		if ( !v->kon_delay )
+		{
+			run_envelope( v );
+
+			if ( f.on && v->env_mode == env_release )
+			{
+				f.on = false;
+				fast_sink->key_off( fast_time, i );
+			}
+		}
+
+		// V4: sample position
+		if ( v->interp_pos >= 0x4000 && (v->brr_offset += 2) >= brr_block_size )
+		{
+			v->brr_addr = (v->brr_addr + brr_block_size) & 0xFFFF;
+			if ( header & 1 )
+			{
+				v->brr_addr = GET_LE16A( &ram [(m.t_dir * 0x100 + VREG(v->regs,srcn) * 4 + 2) & 0xFFFF] );
+				endx |= v->vbit;
+			}
+			v->brr_offset = 1;
+		}
+		v->interp_pos = (v->interp_pos & 0x3FFF) + pitch;
+		if ( v->interp_pos > 0x7FFF )
+			v->interp_pos = 0x7FFF;
+
+		// V5..V9: ENDX, OUTX, ENVX
+		if ( v->kon_delay == 5 )
+			endx &= ~v->vbit;
+		VREG(v->regs,outx)  = 0;
+		XVREG(v->regs,outx) = 0;
+		VREG(v->regs,envx)  = v->t_envx_out;
+		XVREG(v->regs,envx) = v->t_envx_out;
+	}
+
+	REG(endx)  = (uint8_t) endx;
+	XREG(endx) = (uint8_t) endx;
+	m.endx_buf = (uint8_t) endx;
+
+	if ( !(++fast_time % fast_scan_period) )
+		fast_scan();
+}
+
+void SPC_DSP::run_fast( int clocks )
+{
+	// A sample's work is done when its 32 clocks complete
+	int const end = m.phase + clocks;
+	m.phase = end & 31;
+	for ( int n = end >> 5; n; n-- )
+		fast_sample();
+}
+
+#endif
+
 #if !SPC_DSP_CUSTOM_RUN
 
 void SPC_DSP::run( int clocks_remain )
 {
 	require( clocks_remain > 0 );
+
+#ifdef _EE
+	if ( fast_sink )
+	{
+		run_fast( clocks_remain );
+		return;
+	}
+#endif
 
 	int const phase = m.phase;
 	m.phase = (phase + clocks_remain) & 31;
@@ -1270,6 +1569,9 @@ void SPC_DSP::load( uint8_t const regs [register_count] )
 	m.t_esa   = REG(esa);
 
 	soft_reset_common();
+#ifdef _EE
+	fast_resync();
+#endif
 }
 
 void SPC_DSP::reset() { load( initial_regs ); }

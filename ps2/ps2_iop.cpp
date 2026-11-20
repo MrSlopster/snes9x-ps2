@@ -42,6 +42,7 @@ DECLARE_IRX(padman)
 DECLARE_IRX(mtapman)
 DECLARE_IRX(libsd)
 DECLARE_IRX(audsrv)
+DECLARE_IRX(snesspu)
 DECLARE_IRX(usbd)
 DECLARE_IRX(bdm)
 DECLARE_IRX(bdmfs_fatfs)
@@ -55,6 +56,7 @@ DECLARE_IRX(smap)
 static bool pad_ok = false;
 static bool mtap_ok = false;
 static bool audio_ok = false;
+static bool spu_ok = false;
 
 /* A module that returns NO_RESIDENT_END (1) from _start has unloaded
  * itself: its RPC server does not exist. */
@@ -110,6 +112,8 @@ void ps2_iop_init(const char *argv0)
 
 	/* Audio */
 	audio_ok = LOAD_IRX(libsd) && LOAD_IRX(audsrv);
+	/* Our own module (ps2/snesspu): SNES voices on SPU2 voices. */
+	spu_ok = audio_ok && LOAD_IRX(snesspu);
 
 	/* USB mass storage -> mass: */
 	bool usb = LOAD_IRX(usbd) && LOAD_IRX(bdm) && LOAD_IRX(bdmfs_fatfs) &&
@@ -145,6 +149,11 @@ bool ps2_iop_mtap_ok(void)
 bool ps2_iop_audio_ok(void)
 {
 	return audio_ok;
+}
+
+bool ps2_iop_spu_ok(void)
+{
+	return spu_ok;
 }
 
 /* Network adapter drivers for the UDP log: loaded on demand (only when

@@ -14,6 +14,7 @@
 #include "conffile.h"
 #include "ps2_video.h"
 #include "s9x_sound_driver_audsrv.h"
+#include "ps2_spu.h"
 
 #include "ps2_dirs.h"
 #include "ps2_controls.h"
@@ -90,6 +91,24 @@ static void ps2_samples_available(void *)
 	}
 	PROF_SCOPE(PROF_IOP);
 	audsrv_driver.write_samples((int16_t *)sound_buffer, samples);
+}
+
+/* Start or resume the sound path the settings ask for. Fast mode needs
+ * our IOP module and an initialised SPU2 (the audsrv device); without
+ * them it falls back to the accurate path. */
+static void ps2_sound_resume(void)
+{
+	bool fast = ps2_cfg.sound == PS2_SOUND_FAST && ps2_sound_ok && ps2_spu_available();
+	ps2_spu_enable(fast);
+	fast = ps2_spu_enabled();
+	S9xSetSoundMute((fast || ps2_cfg.sound == PS2_SOUND_OFF) ? TRUE : FALSE);
+}
+
+/* Silence for menus and between games. */
+static void ps2_sound_pause(void)
+{
+	S9xSetSoundMute(TRUE);
+	ps2_spu_silence();
 }
 
 extern "C" {
@@ -494,7 +513,7 @@ int main(int argc, char **argv)
 
 	Settings.StopEmulation = FALSE;
 
-	S9xSetSoundMute(!ps2_cfg.sound);
+	ps2_sound_resume();
 
 	printf("Starting emulation\n");
 
@@ -504,9 +523,9 @@ int main(int argc, char **argv)
 		/* Select+Start: in-game menu. */
 		if ((ps2_pad_held(0) & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START))
 		{
-			S9xSetSoundMute(TRUE);
+			ps2_sound_pause();
 			int action = ps2_menu_pause();
-			S9xSetSoundMute(!ps2_cfg.sound);
+			ps2_sound_resume();
 			if (action == PS2_PAUSE_LOAD_ROM)
 			{
 				load_other = true;
@@ -516,6 +535,7 @@ int main(int argc, char **argv)
 
 		ps2_input_poll();
 		S9xMainLoop();
+		ps2_spu_frame();
 		ps2_prof_frame();
 	}
 
@@ -526,7 +546,7 @@ int main(int argc, char **argv)
 		break;
 
 	/* Back to the browser in the current game's folder. */
-	S9xSetSoundMute(TRUE);
+	ps2_sound_pause();
 	start_dir = Memory.ROMFilename.substr(0, Memory.ROMFilename.rfind('/') + 1);
 	failed_name = Memory.ROMFilename.substr(Memory.ROMFilename.rfind('/') + 1);
 	load_error.clear();

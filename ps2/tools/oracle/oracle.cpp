@@ -36,6 +36,30 @@ static uLong audio_crc = 0;
 static std::set<unsigned> dump_frames;
 static std::string dump_dir = ".";
 static unsigned apu_dump_frame = 0; /* --dump-apu N: write the APU state at checkpoint N */
+static FILE *wav_file = NULL;       /* --wav F: the mixed sound output (48 kHz stereo) */
+static unsigned wav_frames = 0;
+
+static void wav_header(FILE *f, unsigned frames)
+{
+	unsigned bytes = frames * 4, riff = bytes + 36;
+	unsigned char h[44] = { 'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 2, 0,
+				0x80, 0xBB, 0, 0, 0x00, 0xEE, 0x02, 0, 4, 0, 16, 0, 'd', 'a', 't', 'a', 0, 0, 0, 0 };
+	memcpy(h + 4, &riff, 4);
+	memcpy(h + 40, &bytes, 4);
+	fseek(f, 0, SEEK_SET);
+	fwrite(h, 1, 44, f);
+}
+
+#ifdef _EE
+/* --fast-wav F: run the sound unit in fast mode (voices played by SPU2
+ * hardware on the PS2) and render what a software SPU2 makes of it. */
+#include "ps2_spu_core.h"
+#include "spu2sim.h"
+static bool fast_sound = false;
+static const SpuBackend fast_backend = { spu2sim_upload, spu2sim_events };
+static const S9xFastSoundSink fast_sink = { spu_core_reset, spu_core_key_on, spu_core_key_off, spu_core_voice,
+					    spu_core_global };
+#endif
 
 static inline uint16 to_gs(uint16 c)
 {
@@ -77,12 +101,17 @@ static void samples_available(void *)
 		return;
 	calls = 0;
 	int samples = S9xGetSampleCount();
-	if (samples < 1024)
+	if (samples < 1024 && !wav_file) /* a recording takes everything, at once */
 		return;
 	if (samples > (int)(sizeof(buf) / 2))
 		samples = sizeof(buf) / 2;
 	S9xMixSamples(buf, samples);
 	audio_crc = crc32(audio_crc, buf, samples * 2);
+	if (wav_file)
+	{
+		fwrite(buf, 2, samples, wav_file);
+		wav_frames += samples / 2;
+	}
 }
 
 bool8 S9xInitUpdate(void) { return TRUE; }
@@ -91,6 +120,10 @@ bool8 S9xContinueUpdate(int, int) { return TRUE; }
 bool8 S9xDeinitUpdate(int width, int height)
 {
 	++frame_no;
+#ifdef _EE
+	if (fast_sound)
+		spu_core_flush(S9xAPUFastSoundSync());
+#endif
 	bool dump = dump_frames.count(frame_no) != 0;
 	if (!dump && frame_no % 60)
 		return TRUE;
@@ -168,7 +201,8 @@ int main(int argc, char **argv)
 {
 	if (argc < 3)
 	{
-		fprintf(stderr, "usage: oracle ROM FRAMES [--dump N[,N...]] [--dump-dir DIR]\n");
+		fprintf(stderr, "usage: oracle ROM FRAMES [--dump N[,N...]] [--dump-dir DIR] [--dump-apu N]\n"
+				"              [--wav FILE] [--fast-wav FILE (port build)]\n");
 		return 2;
 	}
 	unsigned frames = (unsigned)atoi(argv[2]);
@@ -181,6 +215,16 @@ int main(int argc, char **argv)
 			apu_dump_frame = (unsigned)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--dump-dir") && i + 1 < argc)
 			dump_dir = argv[++i];
+		else if (!strcmp(argv[i], "--wav") && i + 1 < argc)
+		{
+			wav_file = fopen(argv[++i], "wb");
+			if (wav_file)
+				wav_header(wav_file, 0);
+		}
+#ifdef _EE
+		else if (!strcmp(argv[i], "--fast-wav") && i + 1 < argc)
+			fast_sound = spu2sim_open(argv[++i]);
+#endif
 	}
 
 	/* ps2_apply_settings() */
@@ -217,6 +261,13 @@ int main(int argc, char **argv)
 		return 1;
 	S9xInitSound(32);
 	S9xSetSoundMute(TRUE);
+#ifdef _EE
+	if (fast_sound)
+	{
+		spu_core_init(S9xAPUGetRAM(), &fast_backend);
+		S9xAPUSetFastSound(&fast_sink);
+	}
+#endif
 	map_buttons();
 	S9xSetController(0, CTL_JOYPAD, 0, 0, 0, 0);
 	S9xSetController(1, CTL_JOYPAD, 1, 0, 0, 0);
@@ -235,6 +286,20 @@ int main(int argc, char **argv)
 
 	while (frame_no < frames && !Settings.StopEmulation)
 		S9xMainLoop();
+	if (wav_file)
+	{
+		wav_header(wav_file, wav_frames);
+		fclose(wav_file);
+	}
+#ifdef _EE
+	if (fast_sound)
+	{
+		spu2sim_close();
+		fprintf(stderr, "fast sound: %u key-ons, %u events, %u samples (%u bytes), %u bad, %u RAM resets\n",
+			spu_core_stats.key_ons, spu_core_stats.events, spu_core_stats.samples,
+			spu_core_stats.sample_bytes, spu_core_stats.bad_samples, spu_core_stats.ram_resets);
+	}
+#endif
 #ifdef ORACLE_IDLE_STATS
 	fprintf(stderr, "idle: plain skips %u, handshake skips %u (%u passes)\n", ps2_idle_plain_skips,
 		ps2_idle_handshake_skips, ps2_idle_handshake_passes);

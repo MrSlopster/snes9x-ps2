@@ -253,6 +253,58 @@ private:
 	void echo_30();
 
 	void soft_reset_common();
+
+#ifdef _EE
+public:
+	// PS2 port, "fast sound" (ps2/ps2_spu.cpp): the SPU2 is a descendant of
+	// this chip, so instead of decoding, interpolating and mixing here the
+	// voices can be played by the hardware. With a sink set, run() keeps
+	// everything a program can observe going - key on/off timing,
+	// envelopes (ENVX), sample position (ENDX), counters - at one step per
+	// sample instead of 32 clocks, produces no samples, and reports what
+	// the voices are doing. Times are in output samples (32 kHz).
+	// Not emulated in this mode: OUTX (reads 0), echo (and its buffer
+	// writes to RAM), and the effect of pitch modulation on ENDX timing.
+	struct fast_sink_t
+	{
+		// Everything off (reset, state load, sink just attached).
+		void (*reset)( unsigned time );
+		// Voice starts playing the BRR sample at 'start' (loop point 'loop').
+		void (*key_on)( unsigned time, int voice, unsigned start, unsigned loop );
+		// Voice enters release (level falls to 0 within 8 ms).
+		void (*key_off)( unsigned time, int voice );
+		// Voice level/pitch changed. vol = VOL register * envelope
+		// (-128..127 * 0..0x7FF); not reported while releasing.
+		void (*voice)( unsigned time, int voice, int vol_l, int vol_r, int pitch );
+		// MVOLL, MVOLR, FLG, NON, PMON changed.
+		void (*global)( unsigned time, int mvol_l, int mvol_r, int flg, int non, int pmon );
+	};
+	void set_fast_sink( const fast_sink_t* );
+	bool fast_active() const { return fast_sink != 0; }
+	unsigned fast_now() const { return fast_time; }
+	// Report everything again (after the state was replaced).
+	void fast_resync();
+
+private:
+	enum { fast_scan_period = 32 }; // samples between level/pitch reports
+	struct fast_voice_t
+	{
+		int vol_l, vol_r, pitch;
+		bool on; // key_on reported, key_off not yet
+	};
+	// read_counter() without divisions (see SPC_DSP.cpp)
+	int ee_counter_seen;
+	unsigned ee_not_multiple [4];
+
+	const fast_sink_t* fast_sink;
+	unsigned fast_time;
+	fast_voice_t fast_voices [voice_count];
+	int fast_global [5];
+
+	void run_fast( int clocks );
+	void fast_sample();
+	void fast_scan();
+#endif
 };
 
 #include <assert.h>

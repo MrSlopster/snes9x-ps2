@@ -31,7 +31,7 @@ void ps2_config_defaults(void)
 	ps2_cfg.filter = PS2_FILTER_SMOOTH;
 	ps2_cfg.frameskip = PS2_FRAMESKIP_AUTO;
 	ps2_cfg.overlay = PS2_OVERLAY_OFF;
-	ps2_cfg.sound = true;
+	ps2_cfg.sound = PS2_SOUND_ACCURATE;
 	ps2_cfg.netlog = false;
 	ps2_cfg.idle_skip = true;
 	ps2_cfg.dump_frames = false;
@@ -67,7 +67,7 @@ void ps2_config_load(void)
 		else if (!strcmp(key, "show_fps")) /* 0 off, 1 FPS, 2 profiler, 3 +PMC */
 			ps2_cfg.overlay = clamp(n, 0, PS2_OVERLAY_COUNT - 1);
 		else if (!strcmp(key, "sound"))
-			ps2_cfg.sound = n != 0;
+			ps2_cfg.sound = (n >= 0 && n < PS2_SOUND_COUNT) ? n : PS2_SOUND_ACCURATE;
 		else if (!strcmp(key, "dump_frames"))
 			ps2_cfg.dump_frames = n != 0;
 		else if (!strcmp(key, "idle_skip"))
@@ -97,7 +97,7 @@ bool ps2_config_save(void)
 	fprintf(f, "filter=%d\n", ps2_cfg.filter);
 	fprintf(f, "frameskip=%d\n", ps2_cfg.frameskip);
 	fprintf(f, "show_fps=%d\n", ps2_cfg.overlay);
-	fprintf(f, "sound=%d\n", ps2_cfg.sound ? 1 : 0);
+	fprintf(f, "sound=%d\n", ps2_cfg.sound);
 	fprintf(f, "idle_skip=%d\n", ps2_cfg.idle_skip ? 1 : 0);
 	fprintf(f, "netlog=%d\n", ps2_cfg.netlog ? 1 : 0);
 	fprintf(f, "netlog_host=%s\n", ps2_cfg.netlog_host.c_str());
@@ -118,6 +118,7 @@ void ps2_config_apply_core(void)
 	Settings.DisplayFrameRate = ps2_cfg.overlay == PS2_OVERLAY_FPS ? TRUE : FALSE;
 	ps2_prof_enabled = ps2_cfg.overlay >= PS2_OVERLAY_PROFILER;
 	ps2_prof_pmc = ps2_cfg.overlay == PS2_OVERLAY_PROFILER_PMC;
-	Settings.Mute = ps2_cfg.sound ? FALSE : TRUE;
+	/* Only the accurate path produces samples (and paces by them). */
+	Settings.Mute = ps2_cfg.sound == PS2_SOUND_ACCURATE ? FALSE : TRUE;
 	ps2_idle_enabled = ps2_cfg.idle_skip ? 1 : 0;
 }

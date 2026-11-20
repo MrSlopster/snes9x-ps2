@@ -24,6 +24,22 @@ void S9xAPUExecute (void);
 void S9xAPUEndScanline (void);
 #ifdef _EE
 int S9xAPUHandshakeSkip (int32 c, int32 kmax);
+
+/* Fast sound: the DSP stops producing samples and reports what its voices
+ * do instead (see SPC_DSP::fast_sink_t, whose members these are), for
+ * playback on SPU2 hardware voices. NULL returns to normal operation. */
+struct S9xFastSoundSink
+{
+	void (*reset) (unsigned time);
+	void (*key_on) (unsigned time, int voice, unsigned start, unsigned loop);
+	void (*key_off) (unsigned time, int voice);
+	void (*voice) (unsigned time, int voice, int vol_l, int vol_r, int pitch);
+	void (*global) (unsigned time, int mvol_l, int mvol_r, int flg, int non, int pmon);
+};
+void S9xAPUSetFastSound (const S9xFastSoundSink *);
+/* Catches the sound unit up to the CPU; returns its time in 32 kHz samples. */
+unsigned S9xAPUFastSoundSync (void);
+uint8 *S9xAPUGetRAM (void);
 #endif
 void S9xAPUSetReferenceTime (int32);
 void S9xAPUTimingSetSpeedup (int);

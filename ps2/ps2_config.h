@@ -14,13 +14,21 @@ enum
 	PS2_OVERLAY_COUNT
 };
 
+enum
+{
+	PS2_SOUND_OFF = 0,
+	PS2_SOUND_ACCURATE, /* software DSP, streamed */
+	PS2_SOUND_FAST,     /* voices on SPU2 hardware (ps2_spu.h) */
+	PS2_SOUND_COUNT
+};
+
 struct Ps2Config
 {
 	int video_mode;   /* PS2_VIDEO_* */
 	int filter;       /* PS2_FILTER_* */
 	int frameskip;    /* PS2_FRAMESKIP_AUTO or 0..4 frames skipped */
 	int overlay;      /* PS2_OVERLAY_* */
-	bool sound;
+	int sound;        /* PS2_SOUND_* */
 	bool netlog;            /* UDP log over the network adapter */
 	bool idle_skip;         /* exact 65816 idle-loop skipping (ps2_idle.cpp) */
 	bool dump_frames;       /* debug: raw frame dumps with the profiler */

@@ -370,9 +370,12 @@ void S9xAPUEndScanline(void)
     apu_pending[apu_npending++] = S9xAPUGetClock(CPU.Cycles);
     spc::remainder = S9xAPUGetClockRemainder(CPU.Cycles);
     S9xAPUSetReferenceTime(CPU.Cycles);
-    if (apu_npending < APU_BATCH_LINES)
-        return;
-    S9xAPUFlushPending();
+    if (apu_npending >= APU_BATCH_LINES)
+        S9xAPUFlushPending();
+    /* Samples are also produced whenever a port access flushes the queue,
+     * so hand them on from every scanline, not only after a flush here:
+     * a program that polls the ports all the time would otherwise fill
+     * the buffer and lose samples. */
 #else
     S9xAPUExecute();
     SNES::dsp.synchronize();
@@ -425,6 +428,41 @@ void S9xSoftResetAPU(void)
 
     S9xClearSamples();
 }
+
+#ifdef _EE
+void S9xAPUSetFastSound(const S9xFastSoundSink *sink)
+{
+    static SNES::SPC_DSP::fast_sink_t dsp_sink;
+
+    /* Bring the DSP to the present in the mode it was in. */
+    S9xAPUExecute();
+    SNES::dsp.synchronize();
+
+    if (!sink)
+    {
+        SNES::dsp.spc_dsp.set_fast_sink(NULL);
+        return;
+    }
+    dsp_sink.reset = sink->reset;
+    dsp_sink.key_on = sink->key_on;
+    dsp_sink.key_off = sink->key_off;
+    dsp_sink.voice = sink->voice;
+    dsp_sink.global = sink->global;
+    SNES::dsp.spc_dsp.set_fast_sink(&dsp_sink);
+}
+
+unsigned S9xAPUFastSoundSync(void)
+{
+    S9xAPUExecute();
+    SNES::dsp.synchronize();
+    return SNES::dsp.spc_dsp.fast_now();
+}
+
+uint8 *S9xAPUGetRAM(void)
+{
+    return SNES::smp.apuram;
+}
+#endif
 
 void S9xAPUSaveState(uint8 *block)
 {
