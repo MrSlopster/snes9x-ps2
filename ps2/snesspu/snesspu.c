@@ -46,6 +46,22 @@ static unsigned int last_usec, frac;
 
 static unsigned int koff_deferred;
 
+/* Core attribute register. libsd's sceSdSetCoreAttr(SD_CORE_NOISE_CLK)
+ * subtracts where it should mask and clears the output-enable and
+ * external-input bits on the way (silence on real hardware), so the noise
+ * clock field is written here instead. */
+#define CORE_ATTR ((volatile u16 *)(0xBF90019A + (CORE << 10)))
+#define ATTR_ON 0x8000
+#define ATTR_UNMUTE 0x4000
+#define ATTR_NOISE_CLK 0x3F00
+#define ATTR_EX_INPUT 0x0001
+
+static void set_noise_clock(unsigned int clk)
+{
+	/* (the low bits 4-5 are the transfer mode libsd manages) */
+	*CORE_ATTR = (*CORE_ATTR & ~ATTR_NOISE_CLK) | ATTR_ON | ATTR_UNMUTE | ATTR_EX_INPUT | ((clk & 0x3F) << 8);
+}
+
 static unsigned int now_usec(void)
 {
 	iop_sys_clock_t c;
@@ -78,6 +94,7 @@ static void setup_voices(void)
 		sceSdSetParam(CORE | (v << 1) | SD_VPARAM_ADSR2, SNESSPU_ADSR2);
 		sceSdSetParam(CORE | (v << 1) | SD_VPARAM_PITCH, 0);
 	}
+	set_noise_clock(0);
 	all_off();
 }
 
@@ -135,7 +152,7 @@ static void apply_due(void)
 			sceSdSetSwitch(CORE | SD_SWITCH_PMON, e->value & 0xFE);
 			break;
 		case SNESSPU_EV_NOISE:
-			sceSdSetCoreAttr(CORE | SD_CORE_NOISE_CLK, e->value & 0x3F);
+			set_noise_clock(e->value);
 			break;
 		case SNESSPU_EV_ALL_OFF:
 			all_off();
@@ -246,7 +263,7 @@ static void fill_status(void)
 	st.play_pos = play_pos;
 	st.newest = newest;
 	st.mvol = ((unsigned int)sceSdGetParam(CORE | SD_PARAM_MVOLL) << 16) | (sceSdGetParam(CORE | SD_PARAM_MVOLR) & 0xFFFF);
-	st.core_attr = *(volatile u16 *)(0xBF90019A + (CORE << 10));
+	st.core_attr = *CORE_ATTR;
 	for (v = 0; v < 8; v++)
 		st.envx[v] = sceSdGetParam(CORE | (v << 1) | SD_VPARAM_ENVX);
 	st.nax[0] = sceSdGetAddr(CORE | (0 << 1) | SD_VADDR_NAX);

@@ -25,7 +25,6 @@ I_sceSdSetParam
 I_sceSdGetParam
 I_sceSdGetAddr
 I_sceSdGetSwitch
-I_sceSdSetCoreAttr
 I_sceSdSetAddr
 I_sceSdSetSwitch
 I_sceSdVoiceTrans
