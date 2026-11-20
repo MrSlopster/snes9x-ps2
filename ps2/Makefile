@@ -75,10 +75,16 @@ irx_%.c: $(PS2SDK)/iop/irx/%.irx
 
 # apu/bapu objects share basenames with nothing else, but their sources are
 # nested; build them with explicit rules.
+# Code size matters more than -O3 here: the R5900 has a 16 KB instruction
+# cache and the APU runs SPC700 and DSP code alternately every scanline
+# slice. -O3 inlines the DSP voice clocks into a 9.7 KB run() (26.5 KB of
+# DSP code; 16.9 KB at -O2) and op_step is 38 KB (27 KB at -Os). Judge
+# changes here with the hardware counters (Overlay: Profiler+PMC), not
+# PCSX2, which does not model the cache.
 bapu-dsp-sdsp.o: ../apu/bapu/dsp/sdsp.cpp
-	$(EE_CXX_COMPILE) -c $< -o $@
+	$(EE_CXX_COMPILE) -O2 -c $< -o $@
 bapu-smp-smp.o: ../apu/bapu/smp/smp.cpp
-	$(EE_CXX_COMPILE) -c $< -o $@
+	$(EE_CXX_COMPILE) -Os -c $< -o $@
 bapu-smp-smp_state.o: ../apu/bapu/smp/smp_state.cpp
 	$(EE_CXX_COMPILE) -c $< -o $@
 

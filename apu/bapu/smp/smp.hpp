@@ -110,9 +110,19 @@ public:
   inline void tick(unsigned clocks);
   alwaysinline void op_io();
   alwaysinline void op_io(unsigned clocks);
+#ifdef _EE
+  /* PS2 port: with these forced inline into every cycle of every opcode,
+   * SMP::enter() compiles to ~107 KB - against a 16 KB instruction cache
+   * (hardware PMC: ~22k APU I-cache misses per frame). As real functions
+   * each access is one call and the interpreter is a fraction of that. */
+  __attribute__((noinline)) uint8 op_read(uint16 addr);
+  __attribute__((noinline)) void op_write(uint16 addr, uint8 data);
+  __attribute__((noinline)) void op_step();
+#else
   debugvirtual alwaysinline uint8 op_read(uint16 addr);
   debugvirtual alwaysinline void op_write(uint16 addr, uint8 data);
   debugvirtual alwaysinline void op_step();
+#endif
   alwaysinline void op_writestack(uint8 data);
   alwaysinline uint8 op_readstack();
   static const unsigned cycle_count_table[256];
