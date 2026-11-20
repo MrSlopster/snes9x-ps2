@@ -27,6 +27,9 @@
 #include "conffile.h"
 #include "display.h"
 #include "apu/bapu/snes/snes.hpp"
+#ifdef ORACLE_IDLE_STATS
+#include "ps2_idle.h"
+#endif
 
 static unsigned frame_no = 0;
 static uLong audio_crc = 0;
@@ -232,5 +235,9 @@ int main(int argc, char **argv)
 
 	while (frame_no < frames && !Settings.StopEmulation)
 		S9xMainLoop();
+#ifdef ORACLE_IDLE_STATS
+	fprintf(stderr, "idle: plain skips %u, handshake skips %u (%u passes)\n", ps2_idle_plain_skips,
+		ps2_idle_handshake_skips, ps2_idle_handshake_passes);
+#endif
 	return 0;
 }

@@ -313,6 +313,56 @@ void S9xAPUExecute(void)
     S9xAPUSetReferenceTime(CPU.Cycles);
 }
 
+#ifdef _EE
+/* PS2 port: handshake fast-forward (ps2/ps2_idle.cpp).
+ *
+ * The 65816 sits in a side-effect-free loop of 'c' master cycles that
+ * reads one APU port per pass; the last pass's read just ran
+ * S9xAPUExecute() (reference_time = that read). Upstream would repeat
+ * "run the SPC700 up to this pass's read, return the port byte" until
+ * the SPC700 writes a port or an event intervenes. This does the same
+ * work in one go for up to kmax passes and returns how many passes k
+ * can be skipped:
+ *   F(m) = SPC700 cycles due by the m-th next read (the same carried-
+ *          remainder formula S9xAPUExecute uses, so it telescopes);
+ *   a cycle step runs during read m iff clock_now + spent < F(m).
+ * The SPC700 is stepped until it changes an output port or has done
+ * everything read kmax would have made it do. If a port changed in a step
+ * that read j would have started, passes 1..j-1 still read the old value:
+ * k = j-1, and the SPC700 is simply left ahead (clock > 0) so pass j's
+ * real read finds the write done, exactly as upstream. The caller adds
+ * k*c to CPU.Cycles. */
+int S9xAPUHandshakeSkip(int32 c, int32 kmax)
+{
+    int32 since = CPU.Cycles - spc::reference_time;
+    int e = SNES::smp.clock;
+    if (kmax <= 0 || c <= 0 || apu_npending || since < 0 || since >= c || e < 0)
+        return 0;
+
+    const int num = spc::ratio_numerator, den = spc::ratio_denominator, rem = spc::remainder;
+    #define APU_F(m) ((num * ((m) * c) + rem) / den)
+
+    int write_before = -1;
+    int budget = APU_F(kmax) - e;
+    int spent = budget > 0 ? SNES::smp.ee_run_ahead(budget, &write_before) : 0;
+
+    int k = kmax;
+    if (write_before >= 0)
+    {
+        int m = 1;
+        while (m <= kmax && APU_F(m) <= e + write_before)
+            m++;
+        k = m - 1;
+    }
+
+    SNES::smp.clock = e + spent - APU_F(k);
+    spc::remainder = (num * (k * c) + rem) % den;
+    spc::reference_time += k * c;
+    #undef APU_F
+    return k;
+}
+#endif
+
 void S9xAPUEndScanline(void)
 {
 #ifdef _EE

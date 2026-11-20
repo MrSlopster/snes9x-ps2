@@ -17,6 +17,15 @@ EE_CXXFLAGS += $(SNES9X_FLAGS) -mtune=r5900 -mhard-float \
 	-fno-rtti -fno-exceptions
 EE_INCS += -I.. -I../apu -I../unzip -I../jma -I$(PS2SDK)/ports/include
 EE_LDFLAGS += -L$(PS2SDK)/ports/lib
+# The 65816's always-hot state lives in the EE's 16 KB scratchpad RAM
+# (0x70000000: never misses, not part of the 8 KB D-cache). globals.cpp
+# does not define these on the R5900; the linker gives the symbols their
+# addresses, so no ELF segment is added. ps2_main.cpp zeroes the area at
+# startup and static_asserts the sizes against this layout.
+EE_LDFLAGS += -Wl,--defsym,Registers=0x70000000 -Wl,--defsym,ICPU=0x70000020 \
+	-Wl,--defsym,CPU=0x70000040 -Wl,--defsym,Timings=0x70000090 \
+	-Wl,--defsym,OpenBus=0x700000e0
+
 # Profiler hooks on core functions (ps2_prof.cpp), mangled C++ names.
 EE_LDFLAGS += -Wl,--wrap=_Z17S9xAPUEndScanlinev -Wl,--wrap=_Z14S9xAPUReadPorti \
 	-Wl,--wrap=_Z15S9xAPUWritePortih -Wl,--wrap=_Z15S9xUpdateScreenv \

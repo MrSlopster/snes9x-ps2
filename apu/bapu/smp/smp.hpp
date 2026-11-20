@@ -10,6 +10,13 @@ public:
   void mmio_write(unsigned addr, unsigned data);
 
   void enter();
+#ifdef _EE
+  /* PS2 port (handshake fast-forward, apu.cpp): run cycle steps until
+   * 'budget' cycles are spent or a step changes an output port
+   * ($f4-$f7). Returns the cycles spent; *write_before is the count
+   * before the changing step, or -1 if no port changed. */
+  int ee_run_ahead(int budget, int *write_before);
+#endif
   void power();
   void reset();
 

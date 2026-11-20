@@ -20,13 +20,21 @@
 #include "missing.h"
 #endif
 
+#ifndef _MIPS_ARCH_R5900 /* PS2: lives in scratchpad RAM, see ps2/Makefile */
 struct SCPUState		CPU;
+#endif
+#ifndef _MIPS_ARCH_R5900 /* PS2: lives in scratchpad RAM, see ps2/Makefile */
 struct SICPU			ICPU;
+#endif
+#ifndef _MIPS_ARCH_R5900 /* PS2: lives in scratchpad RAM, see ps2/Makefile */
 struct SRegisters		Registers;
+#endif
 struct SPPU				PPU;
 struct InternalPPU		IPPU;
 struct SDMA				DMA[8];
+#ifndef _MIPS_ARCH_R5900 /* PS2: lives in scratchpad RAM, see ps2/Makefile */
 struct STimings			Timings;
+#endif
 struct SGFX				GFX;
 struct SBG				BG;
 struct SLineData		LineData[240];
@@ -63,7 +71,9 @@ struct Watch			watches[16];
 CMemory					Memory;
 
 char	String[513];
+#ifndef _MIPS_ARCH_R5900 /* PS2: lives in scratchpad RAM, see ps2/Makefile */
 uint8	OpenBus = 0;
+#endif
 uint8	*HDMAMemPointers[8];
 uint16	BlackColourMap[256];
 uint16	DirectColourMaps[8][256];

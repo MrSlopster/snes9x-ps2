@@ -22,6 +22,9 @@ uint8 S9xAPUReadPort (int);
 void S9xAPUWritePort (int, uint8);
 void S9xAPUExecute (void);
 void S9xAPUEndScanline (void);
+#ifdef _EE
+int S9xAPUHandshakeSkip (int32 c, int32 kmax);
+#endif
 void S9xAPUSetReferenceTime (int32);
 void S9xAPUTimingSetSpeedup (int);
 void S9xAPULoadState (uint8 *);

@@ -365,8 +365,20 @@ static void ps2_apply_settings(void)
 	Settings.CartBName[0] = 0;
 }
 
+/* Scratchpad layout from the Makefile's --defsym list. */
+#define SPAD_BASE 0x70000000u
+#define SPAD_USED 0x100
+static_assert(sizeof(Registers) <= 0x20, "Registers overflows its scratchpad slot");
+static_assert(sizeof(ICPU) <= 0x20, "ICPU overflows its scratchpad slot");
+static_assert(sizeof(CPU) <= 0x50, "CPU overflows its scratchpad slot");
+static_assert(sizeof(Timings) <= 0x50, "Timings overflows its scratchpad slot");
+
 int main(int argc, char **argv)
 {
+	/* The scratchpad is not part of the ELF image: clear the core state
+	 * that lives there before anything can touch it. */
+	memset((void *)SPAD_BASE, 0, SPAD_USED);
+
 	printf("\nSnes9x " VERSION " for PS2 (argv[0]=%s)\n", argc > 0 ? argv[0] : "?");
 
 	/* GS comes up first: every later failure path can then show a

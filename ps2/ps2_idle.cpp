@@ -21,11 +21,15 @@
 #include "snes9x.h"
 #include "memmap.h"
 #include "cpuexec.h"
+#include "apu.h"
 
 #include "ps2_idle.h"
 
 int ps2_idle_enabled = 1;
 uint32 ps2_idle_skipped_cycles = 0; /* master cycles, reset by the profiler */
+uint32 ps2_idle_plain_skips = 0;     /* fast-forwards of plain polling loops */
+uint32 ps2_idle_handshake_skips = 0; /* fast-forwards of APU-port loops */
+uint32 ps2_idle_handshake_passes = 0; /* loop passes skipped by those */
 
 static bool peek(uint32 address, uint8 *out)
 {
@@ -39,6 +43,26 @@ static bool peek(uint32 address, uint8 *out)
 static bool direct(uint32 address)
 {
 	return Memory.Map[(address & 0xffffff) >> MEMMAP_SHIFT] >= (uint8 *)CMemory::MAP_LAST;
+}
+
+/* $2140-$217f in a bank that maps the PPU/APU registers: an APU port. */
+static bool apu_port(uint32 address)
+{
+	return Memory.Map[(address & 0xffffff) >> MEMMAP_SHIFT] == (uint8 *)CMemory::MAP_PPU &&
+	       (address & 0xffc0) == 0x2140;
+}
+
+/* Operand is plain memory, or (counted) an APU port read. */
+static bool operand_ok(uint32 address, int *port_reads)
+{
+	if (direct(address))
+		return true;
+	if (apu_port(address))
+	{
+		(*port_reads)++;
+		return true;
+	}
+	return false;
 }
 
 enum Mode
@@ -73,9 +97,17 @@ static int body_mode(uint8 op)
 	}
 }
 
-/* Body = [target, branch_start) in bank PB. */
-static bool body_is_pure(uint16 target, uint16 branch_start)
+enum
 {
+	LOOP_IMPURE = 2,
+	LOOP_PURE = 1,      /* reads only plain memory */
+	LOOP_HANDSHAKE = 3  /* pure, plus exactly one APU port read per pass */
+};
+
+/* Body = [target, branch_start) in bank PB. */
+static int classify_body(uint16 target, uint16 branch_start)
+{
+	int port_reads = 0;
 	uint32 pb = ICPU.ShiftedPB;
 	uint16 pos = target;
 
@@ -83,36 +115,38 @@ static bool body_is_pure(uint16 target, uint16 branch_start)
 	{
 		uint8 op, b1, b2, b3;
 		if (!peek(pb | pos, &op))
-			return false;
+			return LOOP_IMPURE;
 		int mode = body_mode(op);
 		if (mode < 0)
-			return false;
+			return LOOP_IMPURE;
 		uint8 len = ICPU.S9xOpLengths[op];
 		if ((uint16)(branch_start - pos) < len)
-			return false;
+			return LOOP_IMPURE;
 
 		switch (mode)
 		{
 		case DP:
 			if (!peek(pb | (uint16)(pos + 1), &b1) || !direct((Registers.D.W + b1) & 0xffff))
-				return false;
+				return LOOP_IMPURE;
 			break;
 		case ABS:
 			if (!peek(pb | (uint16)(pos + 1), &b1) || !peek(pb | (uint16)(pos + 2), &b2) ||
-			    !direct(ICPU.ShiftedDB | (b1 | (b2 << 8))))
-				return false;
+			    !operand_ok(ICPU.ShiftedDB | (b1 | (b2 << 8)), &port_reads))
+				return LOOP_IMPURE;
 			break;
 		case LONG:
 			if (!peek(pb | (uint16)(pos + 1), &b1) || !peek(pb | (uint16)(pos + 2), &b2) ||
-			    !peek(pb | (uint16)(pos + 3), &b3) || !direct(b1 | (b2 << 8) | (b3 << 16)))
-				return false;
+			    !peek(pb | (uint16)(pos + 3), &b3) || !operand_ok(b1 | (b2 << 8) | (b3 << 16), &port_reads))
+				return LOOP_IMPURE;
 			break;
 		default:
 			break;
 		}
 		pos += len;
 	}
-	return true;
+	if (port_reads == 0)
+		return LOOP_PURE;
+	return port_reads == 1 ? LOOP_HANDSHAKE : LOOP_IMPURE;
 }
 
 /* Purity verdicts, direct-mapped by loop address; operand addresses
@@ -122,23 +156,23 @@ struct PurityEntry
 	uint32 pbpc;
 	uint16 d;
 	uint8 db;
-	uint8 state; /* 0 empty, 1 pure, 2 impure */
+	uint8 state; /* 0 empty, else LOOP_* */
 };
 static PurityEntry purity_cache[256];
 
-static bool loop_is_pure(uint16 target, uint16 after_branch)
+static int loop_kind(uint16 target, uint16 after_branch)
 {
 	uint32 pbpc = Registers.PBPC;
 	PurityEntry &e = purity_cache[(pbpc ^ (pbpc >> 8)) & 255];
 	if (e.state && e.pbpc == pbpc && e.d == Registers.D.W && e.db == Registers.DB)
-		return e.state == 1;
+		return e.state;
 
-	bool pure = body_is_pure(target, (uint16)(after_branch - 2));
+	int kind = classify_body(target, (uint16)(after_branch - 2));
 	e.pbpc = pbpc;
 	e.d = Registers.D.W;
 	e.db = Registers.DB;
-	e.state = pure ? 1 : 2;
-	return pure;
+	e.state = (uint8)kind;
+	return kind;
 }
 
 struct LoopState
@@ -203,15 +237,24 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 	 * once per loop thanks to the purity cache. */
 	if (last.valid && same_state(last, now))
 	{
-		if (loop_is_pure(target, after_branch))
+		int kind = loop_kind(target, after_branch);
+		if (kind != LOOP_IMPURE)
 		{
 			int32 c = now.cycles - last.cycles;
 			if (c > 0 && c <= 512)
 			{
 				int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
 				int32 k = (limit - CPU.Cycles) / c - 1;
+				/* Handshake loops: only as far as the SPC700 leaves the
+				 * port unchanged (runs it ahead; see apu.cpp). */
+				if (k > 0 && kind == LOOP_HANDSHAKE)
+					k = CPU.InDMAorHDMA ? 0 : S9xAPUHandshakeSkip(c, k);
 				if (k > 0)
 				{
+					if (kind == LOOP_HANDSHAKE)
+						ps2_idle_handshake_skips++, ps2_idle_handshake_passes += k;
+					else
+						ps2_idle_plain_skips++;
 					CPU.Cycles += k * c;
 					ps2_idle_skipped_cycles += (uint32)(k * c);
 					now.cycles = CPU.Cycles;

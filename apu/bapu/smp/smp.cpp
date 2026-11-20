@@ -25,6 +25,27 @@ void SMP::enter() {
   while(clock < 0) op_step();
 }
 
+#ifdef _EE
+int SMP::ee_run_ahead(int budget, int *write_before) {
+  uint32 ports, now;
+  memcpy(&ports, apuram + 0xf4, 4);
+  int spent = 0;
+  *write_before = -1;
+  while(spent < budget) {
+    int c0 = clock;
+    op_step();
+    int step = clock - c0;
+    memcpy(&now, apuram + 0xf4, 4);
+    if(now != ports) {
+      *write_before = spent;
+      return spent + step;
+    }
+    spent += step;
+  }
+  return spent;
+}
+#endif
+
 void SMP::power() {
   Processor::clock = 0;
 
