@@ -386,9 +386,6 @@ int main(int argc, char **argv)
 		ps2_video_set_filter(ps2_cfg.filter);
 	ps2_config_apply_core();
 
-	if (ps2_cfg.netlog)
-		ps2_net_start();
-
 	CPU.Flags = 0;
 	S9xDeleteCheats();
 
@@ -413,6 +410,10 @@ int main(int argc, char **argv)
 		while (1)
 			;
 	}
+
+	/* After S9xGraphicsInit: its status screens draw into GFX.Screen. */
+	if (ps2_cfg.netlog)
+		ps2_net_start();
 
 	/* ROM: argv[1] when the loader passes one, otherwise the on-screen
 	 * browser (starting in <base>/roms). Without a pad driver the browser

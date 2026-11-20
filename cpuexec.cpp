@@ -44,6 +44,23 @@ void S9xMainLoop (void)
 
 	for (;;)
 	{
+#ifdef _EE
+		/* PS2 port fast path. Every guard below (NMI, IRQ timer, IRQ line,
+		 * pending IRQ-flag change, scan-keys break, WAI) is almost always
+		 * false, and the original checks them one at a time: load, then a
+		 * dependent branch, six times per emulated instruction - stalls
+		 * on the in-order R5900. Load them all up front and branch once;
+		 * if all are clear the original code would do nothing but fetch
+		 * and dispatch, so jump straight there. Otherwise run it as is. */
+		{
+			uint32 slow = (uint32)CPU.NMIPending | CPU.IRQLine | CPU.IRQExternal |
+				      CPU.WaitingForInterrupt | (uint32)Timings.IRQFlagChanging |
+				      (CPU.Flags & SCAN_KEYS_FLAG) |
+				      (uint32)(CPU.Cycles >= Timings.NextIRQTimer);
+			if (__builtin_expect(slow == 0, 1))
+				goto dispatch;
+		}
+#endif
 		if (CPU.NMIPending)
 		{
 			#ifdef DEBUGGER
@@ -146,6 +163,9 @@ void S9xMainLoop (void)
 			uint8				Op;
 			struct	SOpcodes	*Opcodes;
 
+#ifdef _EE
+		dispatch:
+#endif
 			if (CPU.PCBase)
 			{
 				Op = CPU.PCBase[Registers.PCw];
@@ -167,7 +187,14 @@ void S9xMainLoop (void)
 				Opcodes = S9xOpcodesSlow;
 			}
 
+#ifdef _EE
+			/* Instructions are at most 4 bytes: only look up the length
+			 * (two dependent loads) within 4 bytes of a block end. */
+			if ((Registers.PCw & MEMMAP_MASK) >= MEMMAP_BLOCK_SIZE - 4 &&
+			    (Registers.PCw & MEMMAP_MASK) + ICPU.S9xOpLengths[Op] >= MEMMAP_BLOCK_SIZE)
+#else
 			if ((Registers.PCw & MEMMAP_MASK) + ICPU.S9xOpLengths[Op] >= MEMMAP_BLOCK_SIZE)
+#endif
 			{
 				uint8	*oldPCBase = CPU.PCBase;
 

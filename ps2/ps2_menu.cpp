@@ -291,6 +291,12 @@ static void render_list(const char *title, const std::string &subtitle,
 			const char *empty_text, const std::string &status,
 			bool status_err, const char *help)
 {
+	/* Menus draw into the core's frame buffer: nothing to draw into before
+	 * S9xGraphicsInit (a null GFX.Screen would scribble over the EE kernel
+	 * in low RAM). */
+	if (!GFX.Screen)
+		return;
+
 	fill_rows(0, MENU_H / LINE_H + 1, col_bg);
 
 	draw_text(1, 0, title, col_title);
