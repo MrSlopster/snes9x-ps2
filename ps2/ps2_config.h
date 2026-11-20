@@ -10,6 +10,7 @@ enum
 	PS2_OVERLAY_OFF = 0,
 	PS2_OVERLAY_FPS,
 	PS2_OVERLAY_PROFILER,
+	PS2_OVERLAY_PROFILER_PMC, /* + R5900 performance counters (hardware only) */
 	PS2_OVERLAY_COUNT
 };
 

@@ -354,7 +354,7 @@ static const char *video_mode_names[PS2_VIDEO_MODE_COUNT] = {
 	"Auto (console region)", "NTSC 480i", "PAL 576i", "NTSC 240p", "PAL 288p", "480p (component)"
 };
 static const char *filter_names[PS2_FILTER_COUNT] = { "Smooth", "Sharp" };
-static const char *overlay_names[PS2_OVERLAY_COUNT] = { "Off", "FPS", "Profiler" };
+static const char *overlay_names[PS2_OVERLAY_COUNT] = { "Off", "FPS", "Profiler", "Profiler+PMC" };
 
 enum
 {

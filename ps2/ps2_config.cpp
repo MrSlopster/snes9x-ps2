@@ -61,7 +61,7 @@ void ps2_config_load(void)
 			ps2_cfg.filter = clamp(n, 0, PS2_FILTER_COUNT - 1);
 		else if (!strcmp(key, "frameskip"))
 			ps2_cfg.frameskip = clamp(n, PS2_FRAMESKIP_AUTO, 4);
-		else if (!strcmp(key, "show_fps")) /* 0 off, 1 FPS, 2 profiler */
+		else if (!strcmp(key, "show_fps")) /* 0 off, 1 FPS, 2 profiler, 3 +PMC */
 			ps2_cfg.overlay = clamp(n, 0, PS2_OVERLAY_COUNT - 1);
 		else if (!strcmp(key, "sound"))
 			ps2_cfg.sound = n != 0;
@@ -108,6 +108,7 @@ void ps2_config_apply_core(void)
 	/* Profiler mode shows its own fps line; the core counter would also
 	 * draw into the frame and spoil the A/B frame fingerprints. */
 	Settings.DisplayFrameRate = ps2_cfg.overlay == PS2_OVERLAY_FPS ? TRUE : FALSE;
-	ps2_prof_enabled = ps2_cfg.overlay == PS2_OVERLAY_PROFILER;
+	ps2_prof_enabled = ps2_cfg.overlay >= PS2_OVERLAY_PROFILER;
+	ps2_prof_pmc = ps2_cfg.overlay == PS2_OVERLAY_PROFILER_PMC;
 	Settings.Mute = ps2_cfg.sound ? FALSE : TRUE;
 }

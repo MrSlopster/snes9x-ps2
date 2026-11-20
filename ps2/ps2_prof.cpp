@@ -22,6 +22,7 @@ extern "C" {
 extern "C" char _ftext[], _etext[];
 
 int ps2_prof_enabled = 0;
+int ps2_prof_pmc = 0;
 
 /* Profiler output: console (PCSX2 log / ps2link) and the UDP network log. */
 static void out(const char *fmt, ...)
@@ -40,6 +41,26 @@ static void out(const char *fmt, ...)
 #define STACK_MAX 16
 
 static unsigned acc[PROF_COUNT];       /* cycles this window */
+
+/* R5900 performance counters (COP0 PCCR/PCR0/PCR1), charged per bucket
+ * like the cycle counts. Each window uses one event pair; the pair
+ * rotates so a minute of play covers caches, branches and issue width.
+ * Event numbers: EE Core User's Manual, performance counter chapter.
+ * PCSX2 does not implement these (reads 0): hardware-only data. */
+struct PmcSet
+{
+	const char *name0, *name1;
+	unsigned ev0, ev1;
+};
+static const PmcSet pmc_sets[] = {
+	{ "I$miss", "D$miss", 6, 6 },
+	{ "BTACmiss", "BRmispred", 4, 3 },
+	{ "1issue", "2issue", 2, 2 },
+};
+#define PMC_SETS ((int)(sizeof(pmc_sets) / sizeof(pmc_sets[0])))
+static int pmc_set = 0;
+static unsigned pmc0[PROF_COUNT], pmc1[PROF_COUNT];
+static unsigned last_pc0, last_pc1;
 static unsigned port_calls;            /* APU port accesses this window */
 static int stack[STACK_MAX];
 static int depth = 0;
@@ -56,6 +77,34 @@ static inline unsigned ee_count(void)
 	return c;
 }
 
+static inline unsigned read_pcr0(void)
+{
+	unsigned v;
+	__asm__ __volatile__("mfpc %0, 0" : "=r"(v));
+	return v & 0x7fffffff;
+}
+
+static inline unsigned read_pcr1(void)
+{
+	unsigned v;
+	__asm__ __volatile__("mfpc %0, 1" : "=r"(v));
+	return v & 0x7fffffff;
+}
+
+/* Program PCCR for an event pair, counting in all CPU modes, and zero
+ * both counters. Layout: CTE bit 31; EVENT1 19:15, U1 14, S1 13, K1 12,
+ * EXL1 11; EVENT0 9:5, U0 4, S0 3, K0 2, EXL0 1. */
+static void pmc_program(const PmcSet &p)
+{
+	unsigned pccr = (1u << 31) | (p.ev1 << 15) | (0xFu << 11) | (p.ev0 << 5) | (0xFu << 1);
+	__asm__ __volatile__(
+		"mtps %0, 0\n\t"
+		"mtpc $zero, 0\n\t"
+		"mtpc $zero, 1\n\t"
+		"sync.p" ::"r"(pccr));
+	last_pc0 = last_pc1 = 0;
+}
+
 static inline int current(void)
 {
 	return depth ? stack[depth - 1] : PROF_CPU;
@@ -64,8 +113,17 @@ static inline int current(void)
 static inline void charge(void)
 {
 	unsigned now = ee_count();
-	acc[current()] += now - last_mark; /* wraps safely (unsigned) */
+	int b = current();
+	acc[b] += now - last_mark; /* wraps safely (unsigned) */
 	last_mark = now;
+	if (ps2_prof_pmc)
+	{
+		unsigned p0 = read_pcr0(), p1 = read_pcr1();
+		pmc0[b] += (p0 - last_pc0) & 0x7fffffff;
+		pmc1[b] += (p1 - last_pc1) & 0x7fffffff;
+		last_pc0 = p0;
+		last_pc1 = p1;
+	}
 }
 
 void ps2_prof_push(int bucket)
@@ -202,6 +260,9 @@ void ps2_prof_frame(void)
 	{
 		/* Start a fresh window at a frame boundary. */
 		memset(acc, 0, sizeof(acc));
+		memset(pmc0, 0, sizeof(pmc0));
+		memset(pmc1, 0, sizeof(pmc1));
+		pmc_program(pmc_sets[pmc_set]);
 		port_calls = 0;
 		depth = 0;
 		last_mark = window_start = now;
@@ -225,12 +286,36 @@ void ps2_prof_frame(void)
 		 ms(acc[PROF_WAIT]), ms(total), fps);
 	snprintf(lines[3], sizeof(lines[3]), "APU port calls %u/frame",
 		 port_calls / window_frames);
+
+	if (ps2_prof_pmc)
+	{
+		/* Thousands of events per frame, per bucket. */
+		const PmcSet &p = pmc_sets[pmc_set];
+		static const char *bn[PROF_COUNT] = { "CPU", "APU", "PPU", "VID", "MIX", "IOP", "WAIT" };
+		char line[256];
+		int n = snprintf(line, sizeof(line), "PMC %s/%s k/frame:", p.name0, p.name1);
+		unsigned t0 = 0, t1 = 0;
+		for (int b = 0; b < PROF_COUNT; b++)
+		{
+			t0 += pmc0[b], t1 += pmc1[b];
+			if (b <= PROF_VIDEO)
+				n += snprintf(line + n, sizeof(line) - n, " %s %.1f/%.1f", bn[b],
+					      pmc0[b] / 1000.0 / window_frames, pmc1[b] / 1000.0 / window_frames);
+		}
+		snprintf(line + n, sizeof(line) - n, " ALL %.1f/%.1f", t0 / 1000.0 / window_frames,
+			 t1 / 1000.0 / window_frames);
+		out("%s", line);
+	}
 	out("PROF %s | %s | %s | %s", lines[0], lines[1], lines[2], lines[3]);
 
 	memset(acc, 0, sizeof(acc));
+	memset(pmc0, 0, sizeof(pmc0));
+	memset(pmc1, 0, sizeof(pmc1));
 	port_calls = 0;
-	window_start = last_mark = now;
 	window_frames = 0;
+	pmc_set = (pmc_set + 1) % PMC_SETS;
+	pmc_program(pmc_sets[pmc_set]);
+	window_start = last_mark = ee_count();
 }
 
 /* Output fingerprint for A/B correctness checks of optimizations: CRC of

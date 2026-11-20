@@ -17,6 +17,7 @@ enum
 };
 
 extern int ps2_prof_enabled;
+extern int ps2_prof_pmc; /* also read the R5900 performance counters */
 
 void ps2_prof_push(int bucket);
 void ps2_prof_pop(void);
