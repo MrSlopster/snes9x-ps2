@@ -21,6 +21,7 @@
 #include "ps2_menu.h"
 #include "ps2_config.h"
 #include "ps2_rom.h"
+#include "ps2_prof.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
@@ -73,14 +74,22 @@ static void ps2_samples_available(void *)
 	{
 		/* Never block when pacing doesn't apply: write only what the
 		 * audsrv ring accepts right now, drop the rest. */
-		int max_samples = audsrv_driver.space_free() / 2;
+		int max_samples;
+		{
+			PROF_SCOPE(PROF_IOP);
+			max_samples = audsrv_driver.space_free() / 2;
+		}
 		if (max_samples <= 0)
 			return;
 		if (samples > max_samples)
 			samples = max_samples;
 	}
 
-	S9xMixSamples(sound_buffer, samples);
+	{
+		PROF_SCOPE(PROF_MIX);
+		S9xMixSamples(sound_buffer, samples);
+	}
+	PROF_SCOPE(PROF_IOP);
 	audsrv_driver.write_samples((int16_t *)sound_buffer, samples);
 }
 
@@ -96,12 +105,16 @@ bool8 S9xInitUpdate(void)
 
 bool8 S9xDeinitUpdate(int width, int height)
 {
+	PROF_SCOPE(PROF_VIDEO);
+	ps2_prof_fingerprint(width, height);
+	ps2_prof_overlay(GFX.Screen, GFX.RealPPL, width, height);
 	ps2_video_frame(GFX.Screen, GFX.RealPPL, width, height);
 	return TRUE;
 }
 
 bool8 S9xContinueUpdate(int width, int height)
 {
+	PROF_SCOPE(PROF_VIDEO);
 	ps2_video_frame(GFX.Screen, GFX.RealPPL, width, height);
 	return TRUE;
 }
@@ -183,6 +196,7 @@ void S9xSyncSpeed(void)
 	}
 
 	/* Sleep until this frame's target time in small slices. */
+	PROF_SCOPE(PROF_WAIT);
 	while (1)
 	{
 		while (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
@@ -481,6 +495,7 @@ int main(int argc, char **argv)
 
 		ps2_input_poll();
 		S9xMainLoop();
+		ps2_prof_frame();
 	}
 
 	printf("Saving SRAM: %s\n", S9xGetFilename(".srm", SRAM_DIR).c_str());

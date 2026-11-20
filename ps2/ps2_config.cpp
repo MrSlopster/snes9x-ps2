@@ -10,6 +10,7 @@
 #include "ps2_config.h"
 #include "ps2_dirs.h"
 #include "ps2_video.h"
+#include "ps2_prof.h"
 
 Ps2Config ps2_cfg;
 
@@ -28,7 +29,7 @@ void ps2_config_defaults(void)
 	ps2_cfg.video_mode = PS2_VIDEO_AUTO;
 	ps2_cfg.filter = PS2_FILTER_SMOOTH;
 	ps2_cfg.frameskip = PS2_FRAMESKIP_AUTO;
-	ps2_cfg.show_fps = false;
+	ps2_cfg.overlay = PS2_OVERLAY_OFF;
 	ps2_cfg.sound = true;
 	ps2_cfg.last_dir.clear();
 }
@@ -58,8 +59,8 @@ void ps2_config_load(void)
 			ps2_cfg.filter = clamp(n, 0, PS2_FILTER_COUNT - 1);
 		else if (!strcmp(key, "frameskip"))
 			ps2_cfg.frameskip = clamp(n, PS2_FRAMESKIP_AUTO, 4);
-		else if (!strcmp(key, "show_fps"))
-			ps2_cfg.show_fps = n != 0;
+		else if (!strcmp(key, "show_fps")) /* 0 off, 1 FPS, 2 profiler */
+			ps2_cfg.overlay = clamp(n, 0, PS2_OVERLAY_COUNT - 1);
 		else if (!strcmp(key, "sound"))
 			ps2_cfg.sound = n != 0;
 		else if (!strcmp(key, "last_dir"))
@@ -82,7 +83,7 @@ bool ps2_config_save(void)
 	fprintf(f, "video_mode=%d\n", ps2_cfg.video_mode);
 	fprintf(f, "filter=%d\n", ps2_cfg.filter);
 	fprintf(f, "frameskip=%d\n", ps2_cfg.frameskip);
-	fprintf(f, "show_fps=%d\n", ps2_cfg.show_fps ? 1 : 0);
+	fprintf(f, "show_fps=%d\n", ps2_cfg.overlay);
 	fprintf(f, "sound=%d\n", ps2_cfg.sound ? 1 : 0);
 	fprintf(f, "last_dir=%s\n", ps2_cfg.last_dir.c_str());
 	fclose(f);
@@ -96,6 +97,9 @@ void ps2_config_apply_core(void)
 	Settings.SkipFrames = ps2_cfg.frameskip == PS2_FRAMESKIP_AUTO
 				      ? AUTO_FRAMERATE
 				      : (uint32)(ps2_cfg.frameskip + 1);
-	Settings.DisplayFrameRate = ps2_cfg.show_fps ? TRUE : FALSE;
+	/* Profiler mode shows its own fps line; the core counter would also
+	 * draw into the frame and spoil the A/B frame fingerprints. */
+	Settings.DisplayFrameRate = ps2_cfg.overlay == PS2_OVERLAY_FPS ? TRUE : FALSE;
+	ps2_prof_enabled = ps2_cfg.overlay == PS2_OVERLAY_PROFILER;
 	Settings.Mute = ps2_cfg.sound ? FALSE : TRUE;
 }

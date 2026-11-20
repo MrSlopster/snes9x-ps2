@@ -113,6 +113,36 @@ static void draw_text(int col, int row, const char *s, uint16 fg, int max_cols =
 		draw_char(col + i, row, (unsigned char)((cut && i == max_cols - 1) ? '~' : s[i]), fg);
 }
 
+/* Text on top of a game frame (profiler): yellow with black outline,
+ * clipped to the rendered frame size. */
+void ps2_menu_overlay_text(int x, int y, const char *s, int width, int height)
+{
+	uint16 fg = BUILD_PIXEL(31, 31, 0);
+	for (int i = 0; s[i]; i++)
+	{
+		int x0 = x + i * CHAR_W;
+		if (x0 + CHAR_W > width || y + CHAR_H > height)
+			return;
+
+		unsigned char ch = (unsigned char)s[i];
+		if (ch < 32 || ch > 32 + 14 * 16 - 1)
+			ch = '?';
+		int gi = ch - 32, gr = gi / 16, gc = gi % 16;
+		for (int yy = 0; yy < CHAR_H; yy++)
+		{
+			const char *line = font[gr * CHAR_H + yy] + gc * CHAR_W;
+			uint16 *p = GFX.Screen + (y + yy) * GFX.RealPPL + x0;
+			for (int xx = 0; xx < CHAR_W; xx++)
+			{
+				if (line[xx] == '#')
+					p[xx] = fg;
+				else if (line[xx] == '.')
+					p[xx] = 0;
+			}
+		}
+	}
+}
+
 /* ---- filesystem ---------------------------------------------------- */
 
 static bool has_rom_ext(const char *name)
@@ -323,6 +353,7 @@ static const char *video_mode_names[PS2_VIDEO_MODE_COUNT] = {
 	"Auto (console region)", "NTSC 480i", "PAL 576i", "NTSC 240p", "PAL 288p", "480p (component)"
 };
 static const char *filter_names[PS2_FILTER_COUNT] = { "Smooth", "Sharp" };
+static const char *overlay_names[PS2_OVERLAY_COUNT] = { "Off", "FPS", "Profiler" };
 
 enum
 {
@@ -399,7 +430,7 @@ void ps2_menu_settings(void)
 				    video_choice != ps2_cfg.video_mode ? col_title : col_text };
 		rows[SET_FILTER] = { "Screen filter", std::string("< ") + filter_names[ps2_cfg.filter] + " >", col_text };
 		rows[SET_FRAMESKIP] = { "Frame skip", "< " + frameskip_name(ps2_cfg.frameskip) + " >", col_text };
-		rows[SET_FPS] = { "Show FPS", ps2_cfg.show_fps ? "< On >" : "< Off >", col_text };
+		rows[SET_FPS] = { "Overlay", std::string("< ") + overlay_names[ps2_cfg.overlay] + " >", col_text };
 		rows[SET_SOUND] = { "Sound", ps2_cfg.sound ? "< On >" : "< Off >", col_text };
 		rows[SET_DEFAULTS] = { "Reset to defaults", "", col_dir };
 		rows[SET_BACK] = { "Back", "", col_dir };
@@ -453,7 +484,7 @@ void ps2_menu_settings(void)
 				ps2_cfg.frameskip = wrap(ps2_cfg.frameskip + dir, PS2_FRAMESKIP_AUTO, 4);
 				break;
 			case SET_FPS:
-				ps2_cfg.show_fps = !ps2_cfg.show_fps;
+				ps2_cfg.overlay = wrap(ps2_cfg.overlay + dir, 0, PS2_OVERLAY_COUNT - 1);
 				break;
 			case SET_SOUND:
 				ps2_cfg.sound = !ps2_cfg.sound;

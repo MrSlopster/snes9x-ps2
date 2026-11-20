@@ -17,6 +17,10 @@ EE_CXXFLAGS += $(SNES9X_FLAGS) -mtune=r5900 -mhard-float \
 	-fno-rtti -fno-exceptions
 EE_INCS += -I.. -I../apu -I../unzip -I../jma -I$(PS2SDK)/ports/include
 EE_LDFLAGS += -L$(PS2SDK)/ports/lib
+# Profiler hooks on core functions (ps2_prof.cpp), mangled C++ names.
+EE_LDFLAGS += -Wl,--wrap=_Z17S9xAPUEndScanlinev -Wl,--wrap=_Z14S9xAPUReadPorti \
+	-Wl,--wrap=_Z15S9xAPUWritePortih -Wl,--wrap=_Z15S9xUpdateScreenv \
+	-Wl,--wrap=_Z19S9xEndScreenRefreshv
 EE_LIBS += -lpatches -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 	-lfileXio -lmc -lz -lkernel -lcdvd -lcglue -lm -lc
 
@@ -29,7 +33,7 @@ IRX_OBJS = $(IRX_MODULES:%=irx_%.o)
 
 EE_OBJS = \
 	$(IRX_OBJS) ps2_iop.o \
-	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \

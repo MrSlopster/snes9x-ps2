@@ -29,3 +29,6 @@ int ps2_menu_pause(void);
 /* Progress screen: title, a main line and a detail line; draws one frame
  * per call (cheap enough to call per read chunk). */
 void ps2_menu_status(const char *title, const char *text, const char *detail);
+
+/* Draw text into GFX.Screen over a rendered game frame (width x height). */
+void ps2_menu_overlay_text(int x, int y, const char *s, int width, int height);

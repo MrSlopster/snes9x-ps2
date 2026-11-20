@@ -176,8 +176,22 @@ void S9xStartScreenRefresh (void)
 		PPU.RecomputeClipWindows = TRUE;
 		IPPU.PreviousLine = IPPU.CurrentLine = 0;
 
+#ifdef _EE
+		/* PS2 port: clear only the rows this frame renders (RealPPL pitch,
+		 * both interlace fields included in RenderedScreenHeight) rather
+		 * than the whole 512x478 buffers: ~115 KB instead of ~490 KB of
+		 * memset per frame through the EE's 8 KB data cache. */
+		{
+			uint32 rows = IPPU.RenderedScreenHeight + 1;
+			if (rows > MAX_SNES_HEIGHT)
+				rows = MAX_SNES_HEIGHT;
+			memset(GFX.ZBuffer, 0, GFX.RealPPL * rows);
+			memset(GFX.SubZBuffer, 0, GFX.RealPPL * rows);
+		}
+#else
 		memset(GFX.ZBuffer, 0, GFX.ScreenSize);
 		memset(GFX.SubZBuffer, 0, GFX.ScreenSize);
+#endif
 	}
 
 	if (++IPPU.FrameCount == (uint32)Memory.ROMFramesPerSecond)
