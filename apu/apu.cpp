@@ -268,8 +268,43 @@ void S9xAPUSetReferenceTime(int32 cpucycles)
     spc::reference_time = cpucycles;
 }
 
+#ifdef _EE
+/* PS2 port: deferred APU scanlines.
+ *
+ * Upstream runs, at the end of every scanline, "SPC700 for this line's
+ * cycles, then DSP catch-up": 262 short bursts per frame, each of which
+ * finds the EE's 16 KB instruction cache refilled with 65816/PPU code
+ * (measured on hardware: ~160 I-cache misses per burst, ~41k per frame).
+ *
+ * Here S9xAPUEndScanline only does the clock arithmetic and queues the
+ * line's cycle count. The queue is replayed - same slices, same order,
+ * same SPC700/DSP interleave (they share APU RAM, so the interleave
+ * matters) - when it is full or before anything can observe or change
+ * the APU: a port access (S9xAPUExecute), save state, reset. The 65816
+ * side cannot tell the difference, so the result is bit-identical; the
+ * APU code just runs in a few long, cache-warm bursts per frame. */
+#define APU_BATCH_LINES 32
+static int apu_pending[APU_BATCH_LINES];
+static int apu_npending = 0;
+
+static void S9xAPUFlushPending(void)
+{
+    for (int i = 0; i < apu_npending; i++)
+    {
+        SNES::smp.clock -= apu_pending[i];
+        SNES::smp.enter();
+        SNES::dsp.synchronize();
+    }
+    apu_npending = 0;
+}
+#endif
+
 void S9xAPUExecute(void)
 {
+#ifdef _EE
+    if (apu_npending)
+        S9xAPUFlushPending();
+#endif
     int cycles = S9xAPUGetClock(CPU.Cycles);
     spc::remainder = S9xAPUGetClockRemainder(CPU.Cycles);
     SNES::smp.clock -= cycles;
@@ -280,8 +315,18 @@ void S9xAPUExecute(void)
 
 void S9xAPUEndScanline(void)
 {
+#ifdef _EE
+    /* S9xAPUExecute's arithmetic now, its SPC700/DSP work later. */
+    apu_pending[apu_npending++] = S9xAPUGetClock(CPU.Cycles);
+    spc::remainder = S9xAPUGetClockRemainder(CPU.Cycles);
+    S9xAPUSetReferenceTime(CPU.Cycles);
+    if (apu_npending < APU_BATCH_LINES)
+        return;
+    S9xAPUFlushPending();
+#else
     S9xAPUExecute();
     SNES::dsp.synchronize();
+#endif
 
     if (spc::resampler.space_filled() >= APU_SAMPLE_BLOCK)
         S9xLandSamples();
@@ -303,6 +348,9 @@ void S9xAPUTimingSetSpeedup(int ticks)
 
 void S9xResetAPU(void)
 {
+#ifdef _EE
+    apu_npending = 0;
+#endif
     spc::reference_time = 0;
     spc::remainder = 0;
 
@@ -316,6 +364,9 @@ void S9xResetAPU(void)
 
 void S9xSoftResetAPU(void)
 {
+#ifdef _EE
+    apu_npending = 0;
+#endif
     spc::reference_time = 0;
     spc::remainder = 0;
     SNES::cpu.reset();
@@ -327,6 +378,10 @@ void S9xSoftResetAPU(void)
 
 void S9xAPUSaveState(uint8 *block)
 {
+#ifdef _EE
+    if (apu_npending)
+        S9xAPUFlushPending();
+#endif
     uint8 *ptr = block;
 
     SNES::smp.save_state(&ptr);
@@ -346,6 +401,9 @@ void S9xAPUSaveState(uint8 *block)
 
 void S9xAPULoadState(uint8 *block)
 {
+#ifdef _EE
+    apu_npending = 0;
+#endif
     uint8 *ptr = block;
 
     SNES::smp.load_state(&ptr);

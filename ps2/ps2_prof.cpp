@@ -8,6 +8,8 @@
 #include "gfx.h"
 #include "ppu.h"
 #include <zlib.h>
+#include "apu.h"
+#include "apu/bapu/snes/snes.hpp"
 
 #include "ps2_prof.h"
 #include "ps2_menu.h"
@@ -331,6 +333,20 @@ void ps2_prof_frame(void)
  * frame. PCSX2 runs are deterministic, so equal CRCs = identical output. */
 static uLong audio_crc = 0;
 
+/* Integer fingerprint of the whole emulated sound unit: sync the APU to
+ * the current CPU time (exact at any point), then hash its save state
+ * (SPC700 RAM/registers/timers, DSP internals). Unlike a CRC of mixed
+ * samples it does not depend on when samples are drained or on the
+ * host's float rounding, so it is comparable across builds and machines. */
+static uLong apu_state_crc(void)
+{
+	static uint8 state[SPC_SAVE_STATE_BLOCK_SIZE];
+	S9xAPUExecute();
+	SNES::dsp.synchronize();
+	S9xAPUSaveState(state);
+	return crc32(crc32(0L, Z_NULL, 0), state, sizeof(state));
+}
+
 void ps2_prof_audio(const void *samples, int bytes)
 {
 	if (ps2_prof_enabled)
@@ -367,7 +383,7 @@ void ps2_prof_fingerprint(int width, int height)
 	uLong crc = crc32(0L, Z_NULL, 0);
 	for (int y = 0; y < height; y++)
 		crc = crc32(crc, (const Bytef *)(GFX.Screen + y * GFX.RealPPL), width * 2);
-	out("PFRAME %u %08lx audio %08lx", frame_no, crc, audio_crc);
+	out("PFRAME %u %08lx apu %08lx", frame_no, crc, apu_state_crc());
 }
 
 void ps2_prof_overlay(unsigned short *screen, int pitch, int width, int height)

@@ -26,11 +26,13 @@
 #include "snapshot.h"
 #include "conffile.h"
 #include "display.h"
+#include "apu/bapu/snes/snes.hpp"
 
 static unsigned frame_no = 0;
 static uLong audio_crc = 0;
 static std::set<unsigned> dump_frames;
 static std::string dump_dir = ".";
+static unsigned apu_dump_frame = 0; /* --dump-apu N: write the APU state at checkpoint N */
 
 static inline uint16 to_gs(uint16 c)
 {
@@ -39,12 +41,36 @@ static inline uint16 to_gs(uint16 c)
 	return (uint16)(((b & 31) << 10) | ((g & 31) << 5) | (r & 31));
 }
 
+/* Integer fingerprint of the whole emulated sound unit: sync the APU to
+ * the current CPU time (exact at any point), then hash its save state
+ * (SPC700 RAM/registers/timers, DSP internals). Unlike a CRC of mixed
+ * samples it does not depend on when samples are drained or on the
+ * host's float rounding, so it is comparable across builds and machines. */
+static uLong apu_state_crc(void)
+{
+	static uint8 state[SPC_SAVE_STATE_BLOCK_SIZE];
+	S9xAPUExecute();
+	SNES::dsp.synchronize();
+	S9xAPUSaveState(state);
+	if (apu_dump_frame && apu_dump_frame == frame_no)
+	{
+		std::string path = dump_dir + "/apu_state.bin";
+		FILE *f = fopen(path.c_str(), "wb");
+		if (f)
+		{
+			fwrite(state, sizeof(state), 1, f);
+			fclose(f);
+		}
+	}
+	return crc32(crc32(0L, Z_NULL, 0), state, sizeof(state));
+}
+
 /* Same batching as ps2_samples_available. */
 static void samples_available(void *)
 {
 	static unsigned char buf[32 * 1024];
 	static unsigned calls = 0;
-	if (++calls < 16)
+	if (++calls < 1)
 		return;
 	calls = 0;
 	int samples = S9xGetSampleCount();
@@ -95,7 +121,7 @@ bool8 S9xDeinitUpdate(int width, int height)
 	if (f)
 		fclose(f);
 	if (frame_no % 60 == 0)
-		printf("PFRAME %u %08lx audio %08lx\n", frame_no, crc, audio_crc);
+		printf("PFRAME %u %08lx apu %08lx\n", frame_no, crc, apu_state_crc());
 	return TRUE;
 }
 
@@ -148,6 +174,8 @@ int main(int argc, char **argv)
 		if (!strcmp(argv[i], "--dump") && i + 1 < argc)
 			for (char *t = strtok(argv[++i], ","); t; t = strtok(NULL, ","))
 				dump_frames.insert((unsigned)atoi(t));
+		else if (!strcmp(argv[i], "--dump-apu") && i + 1 < argc)
+			apu_dump_frame = (unsigned)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--dump-dir") && i + 1 < argc)
 			dump_dir = argv[++i];
 	}

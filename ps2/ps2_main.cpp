@@ -36,13 +36,10 @@ static bool ps2_sound_ok = false;
  * 10.7 ms at 48 kHz, ~1.6 pushes per 60 Hz frame (1600 values/frame). */
 #define AUDIO_BATCH 1024
 
-/* Only look at the sample count on every Nth callback. The callback fires
- * on nearly every scanline while samples accumulate, and
- * S9xGetSampleCount() does double-precision maths, which the R5900 FPU
- * (single precision only) runs in software. One scanline lands ~4 input
- * values, so 16 calls overshoot a batch by < 70 values: well inside the
- * AUDIO_BUFFER_MS resampler. */
-#define AUDIO_POLL_EVERY 16
+/* The core lands samples when the deferred APU queue is replayed
+ * (apu.cpp, ~8 times per frame), so the callback can check the sample
+ * count every time. */
+#define AUDIO_POLL_EVERY 1
 
 /* Core pushes samples through this callback (registered with
  * S9xSetSamplesAvailableCallback); we drain the resampler into audsrv.
