@@ -9,5 +9,9 @@ void ps2_video_deinit(void);
  * pitch of the core's buffer (pixels), width/height are the rendered size. */
 void ps2_video_frame(const unsigned short *src, int src_width, int width, int height);
 
-/* Display sync: wait for the GS vertical blank (called by S9xSyncSpeed). */
+/* Draw a solid test colour: lets a TV (no ps2link) tell init/boot failure
+ * states apart once the GS is initialized early at boot. */
+void ps2_video_test(int r, int g, int b);
+
+/* Display sync: wait for the GS vertical blank. */
 void ps2_video_sync(void);

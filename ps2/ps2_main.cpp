@@ -301,12 +301,19 @@ int main(int argc, char **argv)
 	ps2_dirs_init();
 	ps2_apply_settings();
 
+	/* GS comes up first: every later failure path can then show a
+	 * color-coded screen instead of an invisible black screen on a TV
+	 * without a ps2link console (colors: yellow=alloc, magenta=no ROM,
+	 * red=ROM load failed, blue=graphics init failed). */
+	ps2_video_init();
+
 	CPU.Flags = 0;
 	S9xDeleteCheats();
 
 	if (!Memory.Init() || !S9xInitAPU())
 	{
 		printf("Snes9x: Memory allocation failure\n");
+		ps2_video_test(0xFF, 0xFF, 0x00);
 		while (1)
 			;
 	}
@@ -320,6 +327,7 @@ int main(int argc, char **argv)
 	if (!S9xGraphicsInit())
 	{
 		printf("Snes9x: graphics init failed (out of memory)\n");
+		ps2_video_test(0x00, 0x00, 0xFF);
 		while (1)
 			;
 	}
@@ -329,6 +337,7 @@ int main(int argc, char **argv)
 	if (!rom)
 	{
 		printf("No ROM found. Put ROM files in %s/roms/\n", ps2_base_dir());
+		ps2_video_test(0xFF, 0x00, 0xFF);
 		while (1)
 			;
 	}
@@ -338,6 +347,7 @@ int main(int argc, char **argv)
 	if (!Memory.LoadROM(rom))
 	{
 		printf("Error opening ROM: %s\n", rom);
+		ps2_video_test(0xFF, 0x00, 0x00);
 		while (1)
 			;
 	}
@@ -348,7 +358,6 @@ int main(int argc, char **argv)
 
 	Settings.StopEmulation = FALSE;
 
-	ps2_video_init();
 	S9xSetSoundMute(FALSE);
 
 	printf("Starting emulation\n");

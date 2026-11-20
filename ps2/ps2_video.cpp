@@ -36,7 +36,8 @@
 static framebuffer_t fb;
 static zbuffer_t zb;
 static texbuffer_t texbuf;
-static packet_t *draw_packet = NULL;
+static packet_t *upload_packet = NULL; /* texture transfer + TEXFLUSH (chain) */
+static packet_t *draw_packet = NULL;   /* textured sprite + finish (normal) */
 static u16 staging[TEX_MAX_W * TEX_MAX_H] __attribute__((aligned(128)));
 static int video_ready = 0;
 
@@ -123,12 +124,23 @@ void ps2_video_init(void)
 	setup_drawing_environment();
 	setup_texture_state();
 
-	video_ready = 1;
+	/* Upload packet budget: transfer writes 5 + (3 per GIF_BLOCK_SIZE
+	 * chunk) qwords; 512x480 PSM16 is 30720 qwords = 1920 chunks
+	 * -> ~5769 qwords worst case. Draw packet: sprite + finish < 16. */
+	upload_packet = packet_init(6144, PACKET_NORMAL);
+	draw_packet = packet_init(16, PACKET_NORMAL);
+
+	video_ready = upload_packet && draw_packet;
 }
 
 void ps2_video_deinit(void)
 {
 	video_ready = 0;
+	if (upload_packet)
+	{
+		packet_free(upload_packet);
+		upload_packet = NULL;
+	}
 	if (draw_packet)
 	{
 		packet_free(draw_packet);
@@ -142,11 +154,19 @@ void ps2_video_frame(const unsigned short *src, int src_width, int width, int he
 	if (!video_ready)
 		return;
 
+	/* Display sync: wait for the previous scanout to finish before
+	 * drawing the next frame (single-buffered, so drawing mid-field
+	 * tears). This is where the vsync wait lives. */
+	ps2_video_sync();
+
 	if (width > TEX_MAX_W)
 		width = TEX_MAX_W;
 	if (height > TEX_MAX_H)
 		height = TEX_MAX_H;
 	if (width < 1 || height < 1)
+		return;
+
+	if (!upload_packet || !draw_packet)
 		return;
 
 	/* Stage into the aligned buffer, converting 565 -> GS PSM 16 (5551):
@@ -155,22 +175,26 @@ void ps2_video_frame(const unsigned short *src, int src_width, int width, int he
 	ps2_convert_frame_565_to_5551(staging, TEX_MAX_W, src, src_width,
 				      width, height);
 
-	if (!draw_packet)
-	{
-		draw_packet = packet_init(120, PACKET_NORMAL);
-		if (!draw_packet)
-			return;
-	}
+	SyncDCache(staging, (u8 *)staging + sizeof(u16) * TEX_MAX_W * height);
 
-	qword_t *q = draw_packet->data;
+	/* ---- Transfer 1: texture upload (DMA chain) ----
+	 * draw_texture_transfer emits CNT/REF DMA tags; draw_texture_flush
+	 * ENDS the chain (DMATAG_END), so this packet must stop at the flush.
+	 * Anything appended after it is never sent by the DMA controller. */
+	qword_t *q = upload_packet->data;
 
-	/* 1. Upload the frame to the texture area of VRAM. */
 	q = draw_texture_transfer(q, staging, TEX_MAX_W, height, GS_PSM_16,
 				  texbuf.address, texbuf.width);
 	q = draw_texture_flush(q);
 
-	/* 2. Draw one textured sprite stretched to the framebuffer. Due to the
-	 * GS DDA, texel 0.5 maps to screen pixel 0, hence the +/- 0.5f texels. */
+	dma_channel_send_chain(DMA_CHANNEL_GIF, upload_packet->data, q - upload_packet->data, 0, 0);
+	dma_wait_fast();
+
+	/* ---- Transfer 2: draw the sprite (single normal send) ----
+	 * draw_rect_textured emits plain GIF packets without DMA tags, so
+	 * they can only follow a GIF-tagged chain sent normally. */
+	q = draw_packet->data;
+
 	texrect_t rect;
 	rect.v0.x = 0.0f;
 	rect.v0.y = 0.0f;
@@ -178,6 +202,8 @@ void ps2_video_frame(const unsigned short *src, int src_width, int width, int he
 	rect.v1.x = FB_WIDTH;
 	rect.v1.y = FB_HEIGHT;
 	rect.v1.z = 1.0f;
+	/* Due to the GS DDA, texel 0.5 maps to screen pixel 0, hence the
+	 * +/- 0.5f texels. */
 	rect.t0.u = 0.5f;
 	rect.t0.v = 0.5f;
 	rect.t1.u = (float)width - 0.5f;
@@ -192,10 +218,37 @@ void ps2_video_frame(const unsigned short *src, int src_width, int width, int he
 
 	q = draw_finish(q);
 
-	SyncDCache(staging, (u8 *)staging + sizeof(u16) * TEX_MAX_W * height);
-
-	dma_channel_send_chain(DMA_CHANNEL_GIF, draw_packet->data, q - draw_packet->data, 0, 0);
+	dma_channel_send_normal(DMA_CHANNEL_GIF, draw_packet->data, q - draw_packet->data, 0, 0);
 	dma_wait_fast();
+	draw_wait_finish();
+}
+
+void ps2_video_test(int r, int g, int b)
+{
+	if (!video_ready || !draw_packet)
+		return;
+
+	qword_t *q = draw_packet->data;
+
+	rect_t rect;
+	rect.v0.x = 0.0f;
+	rect.v0.y = 0.0f;
+	rect.v0.z = 1.0f;
+	rect.v1.x = FB_WIDTH;
+	rect.v1.y = FB_HEIGHT;
+	rect.v1.z = 1.0f;
+	rect.color.r = (u8)r;
+	rect.color.g = (u8)g;
+	rect.color.b = (u8)b;
+	rect.color.a = 0x80;
+	rect.color.q = 1.0f;
+
+	q = draw_rect_filled(q, 0, &rect);
+	q = draw_finish(q);
+
+	dma_channel_send_normal(DMA_CHANNEL_GIF, draw_packet->data, q - draw_packet->data, 0, 0);
+	dma_wait_fast();
+	draw_wait_finish();
 }
 
 void ps2_video_sync(void)
