@@ -31,7 +31,8 @@ void ps2_config_defaults(void)
 	ps2_cfg.filter = PS2_FILTER_SMOOTH;
 	ps2_cfg.frameskip = PS2_FRAMESKIP_AUTO;
 	ps2_cfg.overlay = PS2_OVERLAY_OFF;
-	ps2_cfg.sound = PS2_SOUND_ACCURATE;
+	/* Falls back to the accurate path where the IOP module is missing. */
+	ps2_cfg.sound = PS2_SOUND_FAST;
 	ps2_cfg.netlog = false;
 	ps2_cfg.idle_skip = true;
 	ps2_cfg.dump_frames = false;
