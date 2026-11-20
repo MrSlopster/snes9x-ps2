@@ -131,8 +131,12 @@ void ps2_input_poll(void)
             continue;
         }
 
+        /* Only a successful read (non-zero return, ok == 0) carries button
+         * data; otherwise status is uninitialized stack and would be
+         * reported to the game as random presses. Keep the last state. */
         struct padButtonStatus status;
-        padRead(port, 0, &status);
+        if (padRead(port, 0, &status) == 0 || status.ok != 0)
+            continue;
 
         report_port(port, status.btns);
     }
@@ -148,7 +152,7 @@ unsigned ps2_pad_held(int port)
         return 0;
 
     struct padButtonStatus status;
-    if (padRead(port, 0, &status) == 0)
+    if (padRead(port, 0, &status) == 0 || status.ok != 0)
         return 0;
 
     /* libpad reports active-low; callers want pressed = 1. */

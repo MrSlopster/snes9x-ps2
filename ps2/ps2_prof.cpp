@@ -12,6 +12,9 @@
 #include "ps2_prof.h"
 #include "ps2_menu.h"
 #include "ps2_net.h"
+#include "ps2_idle.h"
+#include "ps2_config.h"
+#include "ps2_dirs.h"
 #include <stdarg.h>
 
 extern "C" {
@@ -284,8 +287,13 @@ void ps2_prof_frame(void)
 		 ms(acc[PROF_VIDEO]), ms(acc[PROF_MIX]), ms(acc[PROF_IOP]));
 	snprintf(lines[2], sizeof(lines[2]), "WAIT%5.2f =%6.2fms %4.1ffps",
 		 ms(acc[PROF_WAIT]), ms(total), fps);
-	snprintf(lines[3], sizeof(lines[3]), "APU port calls %u/frame",
-		 port_calls / window_frames);
+	{
+		/* Share of emulated 65816 time skipped as exact idle loops. */
+		double frame_cycles = (double)Timings.H_Max * Timings.V_Max * window_frames;
+		snprintf(lines[3], sizeof(lines[3]), "APUport %u/f idle %4.1f%%",
+			 port_calls / window_frames, 100.0 * ps2_idle_skipped_cycles / frame_cycles);
+		ps2_idle_skipped_cycles = 0;
+	}
 
 	if (ps2_prof_pmc)
 	{
@@ -332,7 +340,29 @@ void ps2_prof_audio(const void *samples, int bytes)
 void ps2_prof_fingerprint(int width, int height)
 {
 	static unsigned frame_no = 0;
-	if (!ps2_prof_enabled || ++frame_no % 60)
+	if (!ps2_prof_enabled)
+		return;
+	++frame_no;
+
+	/* Debug: raw frame dumps for exact visual comparisons between builds
+	 * (ps2.cfg dump_frames=1): "<base>/dump_NNNNN.raw" every 300th frame,
+	 * header = width, height (uint16 LE), then rows of BGR555 pixels. */
+	if (ps2_cfg.dump_frames && frame_no % 300 == 0)
+	{
+		char path[300];
+		snprintf(path, sizeof(path), "%s/dump_%05u.raw", ps2_base_dir(), frame_no);
+		FILE *f = fopen(path, "wb");
+		if (f)
+		{
+			uint16 hdr[2] = { (uint16)width, (uint16)height };
+			fwrite(hdr, sizeof(hdr), 1, f);
+			for (int y = 0; y < height; y++)
+				fwrite(GFX.Screen + y * GFX.RealPPL, 2, width, f);
+			fclose(f);
+		}
+	}
+
+	if (frame_no % 60)
 		return;
 	uLong crc = crc32(0L, Z_NULL, 0);
 	for (int y = 0; y < height; y++)

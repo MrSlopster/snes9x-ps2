@@ -358,6 +358,12 @@ static void ps2_apply_settings(void)
 	Settings.SkipFrames = AUTO_FRAMERATE;
 	Settings.TurboSkipFrames = 15;
 	Settings.AutoSaveDelay = 30;
+	/* Non-zero core defaults from S9xLoadConfigFiles (snes9x.cpp) that a
+	 * zeroed Settings would silently break: sprite tiles per scanline,
+	 * Gaussian DSP interpolation, SuperFX clock. */
+	Settings.MaxSpriteTilesPerLine = 34;
+	Settings.InterpolationMethod = 2;
+	Settings.SuperFXClockMultiplier = 100;
 	Settings.CartAName[0] = 0;
 	Settings.CartBName[0] = 0;
 }

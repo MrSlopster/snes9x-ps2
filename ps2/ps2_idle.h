@@ -1,0 +1,11 @@
+#pragma once
+/* Exact 65816 idle-loop skipping (see ps2_idle.cpp). The hook is called
+ * from the core's branch macro (cpumacro.h, _EE) on taken short backward
+ * branches. */
+
+#include "port.h"
+
+extern int ps2_idle_enabled;
+extern uint32 ps2_idle_skipped_cycles; /* master cycles since last reset */
+
+void S9xIdleLoopCheck(uint16 target, uint16 after_branch);

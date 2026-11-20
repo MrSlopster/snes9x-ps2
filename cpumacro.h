@@ -95,6 +95,18 @@ static void Op##OP (void) \
 #define mOPM(OP, ADDR, WRAP, FUNC) \
 mOPC(OP, Memory, ADDR, WRAP, FUNC)
 
+#ifdef _EE
+/* PS2 port: exact idle-loop skipping (ps2/ps2_idle.cpp). Called for a
+ * taken branch back by at most 12 bytes within the same code block,
+ * before PC moves to the target. */
+void S9xIdleLoopCheck (uint16 target, uint16 after_branch);
+#define IDLE_LOOP_HOOK(target, after) \
+	if ((uint16) ((after) - (target)) <= 12 && (target) < (after)) \
+		S9xIdleLoopCheck((target), (after))
+#else
+#define IDLE_LOOP_HOOK(target, after)
+#endif
+
 #define bOP(OP, REL, COND, CHK, E) \
 static void Op##OP (void) \
 { \
@@ -108,7 +120,10 @@ static void Op##OP (void) \
 		if ((Registers.PCw & ~MEMMAP_MASK) != (newPC.W & ~MEMMAP_MASK)) \
 			S9xSetPCBase(ICPU.ShiftedPB + newPC.W); \
 		else \
+		{ \
+			IDLE_LOOP_HOOK(newPC.W, Registers.PCw); \
 			Registers.PCw = newPC.W; \
+		} \
 	} \
 }
 

@@ -22,6 +22,8 @@ struct Ps2Config
 	int overlay;      /* PS2_OVERLAY_* */
 	bool sound;
 	bool netlog;            /* UDP log over the network adapter */
+	bool idle_skip;         /* exact 65816 idle-loop skipping (ps2_idle.cpp) */
+	bool dump_frames;       /* debug: raw frame dumps with the profiler */
 	std::string netlog_host; /* "a.b.c.d[:port]", empty = subnet broadcast */
 	std::string last_dir; /* browser start folder */
 };
