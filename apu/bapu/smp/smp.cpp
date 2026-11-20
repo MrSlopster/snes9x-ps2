@@ -22,7 +22,11 @@ SMP smp;
 #include "timing.cpp"
 
 void SMP::enter() {
+#ifdef _EE
+  ee_enter();
+#else
   while(clock < 0) op_step();
+#endif
 }
 
 #ifdef _EE

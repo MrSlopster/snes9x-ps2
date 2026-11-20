@@ -135,6 +135,10 @@ public:
   __attribute__((noinline)) uint8 op_read(uint16 addr);
   __attribute__((noinline)) void op_write(uint16 addr, uint8 data);
   __attribute__((noinline)) void op_step();
+  /* The loop SMP::enter() runs: op_step()'s opcodes with inline bus
+   * accesses and one tick() per step (core.cpp). */
+  void ee_enter();
+  __attribute__((noinline)) uint8 ee_read_slow(uint16 addr);
 #else
   debugvirtual alwaysinline uint8 op_read(uint16 addr);
   debugvirtual alwaysinline void op_write(uint16 addr, uint8 data);

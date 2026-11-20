@@ -289,12 +289,20 @@ static int apu_npending = 0;
 
 static void S9xAPUFlushPending(void)
 {
+    /* In fast sound mode the DSP produces no samples and reads RAM only
+     * for sample directory entries and block headers: it is caught up
+     * once per batch (and, as always, whenever the SPC700 touches a DSP
+     * register), which lets it take its voices through long runs. */
+    const bool fast = SNES::dsp.spc_dsp.fast_active();
     for (int i = 0; i < apu_npending; i++)
     {
         SNES::smp.clock -= apu_pending[i];
         SNES::smp.enter();
-        SNES::dsp.synchronize();
+        if (!fast)
+            SNES::dsp.synchronize();
     }
+    if (fast)
+        SNES::dsp.synchronize();
     apu_npending = 0;
 }
 #endif

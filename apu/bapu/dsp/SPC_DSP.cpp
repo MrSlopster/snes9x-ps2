@@ -630,6 +630,9 @@ inline void SPC_DSP::run_envelope( voice_t* const v )
 		if ( (env -= 0x8) < 0 )
 			env = 0;
 		v->env = env;
+#ifdef _EE
+		ee_env_rate = 31; // every sample
+#endif
 	}
 	else
 	{
@@ -696,6 +699,9 @@ inline void SPC_DSP::run_envelope( voice_t* const v )
 				v->env_mode = env_decay;
 		}
 
+#ifdef _EE
+		ee_env_rate = rate;
+#endif
 		if ( !read_counter( rate ) )
 			v->env = env; // nothing else is controlled by the counter
 	}
@@ -1450,13 +1456,186 @@ void SPC_DSP::fast_sample()
 		fast_scan();
 }
 
+// Up to n samples at once, when nothing is being keyed on or off: then
+// the voices do not interact and each can be taken through the whole run
+// on its own, with its state in registers - and its envelope only looked
+// at on the samples where its rate counter fires. Same results and
+// reports as n calls of fast_sample(). Returns the number of samples
+// done; 0 if this is not such a moment.
+int SPC_DSP::fast_run( int n )
+{
+	int const flg  = REG(flg);
+	int const koff = REG(koff) | m.mute_mask;
+	if ( m.new_kon | m.kon | (flg & 0x80) )
+		return 0;
+	for ( int i = 0; i < voice_count; i++ )
+	{
+		voice_t const* const v = &m.voices [i];
+		if ( v->kon_delay || ((koff & v->vbit) && v->env_mode != env_release) )
+			return 0;
+	}
+
+	// Up to the next level/pitch report
+	int const to_scan = fast_scan_period - (int) (fast_time % fast_scan_period);
+	if ( n > to_scan )
+		n = to_scan;
+
+	// misc_27..30 for n samples: nothing to latch
+	m.t_pmon = REG(pmon) & 0xFE;
+	m.t_non  = REG(non);
+	m.t_eon  = REG(eon);
+	m.t_dir  = REG(dir);
+	m.t_koff = koff;
+	m.every_other_sample ^= n & 1;
+
+	uint8_t* const ram = m.ram;
+	int const counter0 = m.counter; // sample j runs with counter0 - 1 - j
+	int endx = REG(endx);
+	// (a temporary that is part of the saved state: it is left holding the
+	// ADSR0 of the last voice that was not silent on the last sample)
+	int last_adsr0 = m.t_adsr0;
+
+	for ( int i = 0; i < voice_count; i++ )
+	{
+		voice_t* const v = &m.voices [i];
+		fast_voice_t& f  = fast_voices [i];
+		int const pitch  = VREG(v->regs,pitchl) + ((VREG(v->regs,pitchh) & 0x3F) << 8);
+		int interp_pos   = v->interp_pos;
+		int brr_offset   = v->brr_offset;
+		int brr_addr     = v->brr_addr;
+		int envx         = v->t_envx_out;
+		int j            = 0;
+		int quiet        = 0; // samples the envelope needs no attention for
+
+		m.t_adsr0 = VREG(v->regs,adsr0);
+
+		for ( ; j < n; j++ )
+		{
+			// Silent and released: stays so (see fast_sample)
+			if ( !v->env && v->env_mode == env_release )
+				break;
+
+			int const header = ram [brr_addr];
+			envx = v->env >> 4;
+
+			if ( (header & 3) == 1 )
+			{
+				v->env_mode = env_release;
+				v->env      = 0;
+				quiet       = 0;
+			}
+
+			if ( quiet )
+				quiet--;
+			else
+			{
+				int c = counter0 - 1 - j;
+				if ( c < 0 )
+					c += simple_counter_range;
+				m.counter = c;
+
+				int const env0 = v->env;
+				env_mode_t const mode0 = v->env_mode;
+				run_envelope( v );
+				if ( v->env == env0 && v->env_mode == mode0 )
+				{
+					// Nothing moved. With the same inputs nothing will until
+					// the counter next fires for this rate - and if it fired
+					// just now, not then either.
+					unsigned const rate = counter_rates [ee_env_rate];
+					unsigned const wait = ((unsigned) c + counter_offsets [ee_env_rate]) % rate;
+					quiet = wait ? (int) wait - 1 : n;
+				}
+			}
+
+			if ( f.on && v->env_mode == env_release )
+			{
+				f.on = false;
+				fast_sink->key_off( fast_time + j, i );
+			}
+
+			if ( interp_pos >= 0x4000 && (brr_offset += 2) >= brr_block_size )
+			{
+				brr_addr = (brr_addr + brr_block_size) & 0xFFFF;
+				if ( header & 1 )
+				{
+					brr_addr = GET_LE16A( &ram [(m.t_dir * 0x100 + VREG(v->regs,srcn) * 4 + 2) & 0xFFFF] );
+					endx |= v->vbit;
+				}
+				brr_offset = 1;
+			}
+			interp_pos = (interp_pos & 0x3FFF) + pitch;
+		}
+
+		// The rest of the run, silent: only the sample position moves
+		if ( j == n )
+			last_adsr0 = VREG(v->regs,adsr0);
+		else
+		{
+			envx = 0;
+			if ( f.on )
+			{
+				f.on = false;
+				fast_sink->key_off( fast_time + j, i );
+			}
+			for ( ; j < n; j++ )
+			{
+				if ( interp_pos >= 0x4000 && (brr_offset += 2) >= brr_block_size )
+				{
+					int const header = ram [brr_addr];
+					brr_addr = (brr_addr + brr_block_size) & 0xFFFF;
+					if ( header & 1 )
+					{
+						brr_addr = GET_LE16A( &ram [(m.t_dir * 0x100 + VREG(v->regs,srcn) * 4 + 2) & 0xFFFF] );
+						endx |= v->vbit;
+					}
+					brr_offset = 1;
+				}
+				interp_pos = (interp_pos & 0x3FFF) + pitch;
+			}
+		}
+
+		v->interp_pos = interp_pos;
+		v->brr_offset = brr_offset;
+		v->brr_addr   = brr_addr;
+		v->t_envx_out = (uint8_t) envx;
+		VREG(v->regs,outx)  = 0;
+		XVREG(v->regs,outx) = 0;
+		VREG(v->regs,envx)  = (uint8_t) envx;
+		XVREG(v->regs,envx) = (uint8_t) envx;
+	}
+
+	int c = counter0 - n;
+	if ( c < 0 )
+		c += simple_counter_range;
+	m.counter = c;
+	m.t_adsr0 = last_adsr0;
+
+	REG(endx)  = (uint8_t) endx;
+	XREG(endx) = (uint8_t) endx;
+	m.endx_buf = (uint8_t) endx;
+
+	fast_time += n;
+	if ( !(fast_time % fast_scan_period) )
+		fast_scan();
+	return n;
+}
+
 void SPC_DSP::run_fast( int clocks )
 {
 	// A sample's work is done when its 32 clocks complete
 	int const end = m.phase + clocks;
 	m.phase = end & 31;
-	for ( int n = end >> 5; n; n-- )
-		fast_sample();
+	for ( int n = end >> 5; n > 0; )
+	{
+		int done = fast_run( n );
+		if ( !done )
+		{
+			fast_sample();
+			done = 1;
+		}
+		n -= done;
+	}
 }
 
 #endif

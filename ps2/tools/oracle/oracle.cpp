@@ -51,11 +51,86 @@ static void wav_header(FILE *f, unsigned frames)
 }
 
 #ifdef _EE
+/* --smp-selftest N: the port's SPC700 loop (SMP::ee_enter) against the
+ * reference op_step(), from N random machine states: random registers,
+ * code and data, timers and I/O included, run for a random number of
+ * cycles so that slices end in the middle of opcodes. The complete sound
+ * unit state must come out the same. */
+static int smp_selftest(unsigned trials)
+{
+	static uint8 before[SPC_SAVE_STATE_BLOCK_SIZE], a[SPC_SAVE_STATE_BLOCK_SIZE], b[SPC_SAVE_STATE_BLOCK_SIZE];
+	unsigned seed = 12345, failures = 0;
+	#define RND() (seed = seed * 1103515245u + 12345u, (seed >> 16) & 0x7fff)
+	uint8 *ram = S9xAPUGetRAM();
+	for (unsigned i = 0; i < 0x10000; i++)
+		ram[i] = (uint8)RND();
+
+	for (unsigned t = 0; t < trials; t++)
+	{
+		/* Fresh code and data around a random PC; now and then in the
+		 * direct page (I/O at $f0-$ff) or the IPL ROM area. */
+		unsigned pc = RND() * 2 + (RND() & 1);
+		if (t % 7 == 0)
+			pc = 0x00d0 + (RND() & 0x3f);
+		if (t % 11 == 0)
+			pc = 0xffb0 + (RND() & 0x3f);
+		for (unsigned i = 0; i < 48; i++)
+			ram[(pc + i) & 0xffff] = (uint8)RND();
+		for (unsigned i = 0; i < 16; i++)
+			ram[RND() * 2 & 0xffff] = (uint8)RND();
+		/* (STOP and SLEEP never leave their opcode) */
+		SNES::smp.regs.pc = pc;
+		SNES::smp.regs.sp = RND();
+		SNES::smp.regs.B.a = RND();
+		SNES::smp.regs.x = RND();
+		SNES::smp.regs.B.y = RND();
+		SNES::smp.regs.p = RND();
+		SNES::smp.opcode_cycle = 0;
+		if (t % 5 == 0)
+			ram[0xf1] = RND(), SNES::smp.mmio_write(0xf1, ram[0xf1]);
+		if (t % 13 == 0)
+			SNES::smp.mmio_write(0xfa + RND() % 3, RND());
+		S9xAPUSaveState(before);
+
+		int cycles = 1 + RND() % 60;
+		S9xAPULoadState(before);
+		SNES::smp.clock = -cycles;
+		while (SNES::smp.clock < 0)
+			SNES::smp.op_step();
+		int end_a = SNES::smp.clock;
+		S9xAPUSaveState(a);
+
+		S9xAPULoadState(before);
+		SNES::smp.clock = -cycles;
+		SNES::smp.ee_enter();
+		int end_b = SNES::smp.clock;
+		S9xAPUSaveState(b);
+
+		if (end_a != end_b || memcmp(a, b, sizeof(a)))
+		{
+			if (failures++ < 10)
+			{
+				unsigned at = 0;
+				while (at < sizeof(a) && a[at] == b[at])
+					at++;
+				printf("FAIL trial %u: pc %04x opcode %02x, %d cycles: clock %d vs %d, first difference at state byte %u\n",
+				       t, pc, before[pc], cycles, end_a, end_b, at);
+			}
+		}
+		/* Carry on from the reference result so states stay varied. */
+		S9xAPULoadState(a);
+	}
+	#undef RND
+	printf("%u SPC700 trials\n%s (%u failures)\n", trials, failures ? "RED/FAIL" : "GREEN/PASS", failures);
+	return failures ? 1 : 0;
+}
+
 /* --fast-wav F: run the sound unit in fast mode (voices played by SPU2
  * hardware on the PS2) and render what a software SPU2 makes of it. */
 #include "ps2_spu_core.h"
 #include "spu2sim.h"
 static bool fast_sound = false;
+static unsigned smp_selftest_trials = 0;
 static const SpuBackend fast_backend = { spu2sim_upload, spu2sim_events };
 static const S9xFastSoundSink fast_sink = { spu_core_reset, spu_core_key_on, spu_core_key_off, spu_core_voice,
 					    spu_core_global };
@@ -202,7 +277,7 @@ int main(int argc, char **argv)
 	if (argc < 3)
 	{
 		fprintf(stderr, "usage: oracle ROM FRAMES [--dump N[,N...]] [--dump-dir DIR] [--dump-apu N]\n"
-				"              [--wav FILE] [--fast-wav FILE (port build)]\n");
+				"              [--wav FILE] [--fast-wav FILE | --smp-selftest N (port build)]\n");
 		return 2;
 	}
 	unsigned frames = (unsigned)atoi(argv[2]);
@@ -222,6 +297,8 @@ int main(int argc, char **argv)
 				wav_header(wav_file, 0);
 		}
 #ifdef _EE
+		else if (!strcmp(argv[i], "--smp-selftest") && i + 1 < argc)
+			smp_selftest_trials = (unsigned)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--fast-wav") && i + 1 < argc)
 			fast_sound = spu2sim_open(argv[++i]);
 #endif
@@ -283,6 +360,10 @@ int main(int argc, char **argv)
 	S9xCheatsEnable();
 	Settings.StopEmulation = FALSE;
 	S9xSetSoundMute(FALSE);
+#ifdef _EE
+	if (smp_selftest_trials)
+		return smp_selftest(smp_selftest_trials);
+#endif
 
 	while (frame_no < frames && !Settings.StopEmulation)
 		S9xMainLoop();

@@ -303,6 +303,8 @@ private:
 
 	void run_fast( int clocks );
 	void fast_sample();
+	int  fast_run( int n );
+	int ee_env_rate; // counter rate run_envelope() last used
 	void fast_scan();
 #endif
 };
