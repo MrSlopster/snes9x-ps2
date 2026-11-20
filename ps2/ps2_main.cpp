@@ -7,10 +7,14 @@
 #include "apu.h"
 #include "gfx.h"
 #include "controls.h"
+#include "cheats.h"
 #include "stream.h"
 #include "conffile.h"
 #include "ps2_video.h"
 #include "s9x_sound_driver_audsrv.h"
+
+#include "ps2_dirs.h"
+#include "ps2_controls.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 
@@ -64,6 +68,9 @@ void S9xSyncSpeed(void)
 
 void S9xAutoSaveSRAM(void)
 {
+	/* Called from RenderLine once per Settings.AutoSaveDelay frames when
+	 * SRAM was modified. */
+	Memory.SaveSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
 }
 
 void S9xMessage(int type, int number, const char *message)
@@ -74,8 +81,9 @@ void S9xMessage(int type, int number, const char *message)
 
 void S9xExit(void)
 {
-	while (1)
-		;
+	/* Called from the core on fatal errors; when emulation is running this
+	 * unwinds the main loop instead of halting. */
+	Settings.StopEmulation = TRUE;
 }
 
 /* apu.cpp calls this via S9xInitSound: open + configure the audsrv device. */
@@ -160,12 +168,102 @@ bool S9xPollAxis(uint32 id, int16 *value)
 	return FALSE;
 }
 
+static void ps2_apply_settings(void)
+{
+	/* Defaults follow unix/unix.cpp main(); PS2-specific choices are the
+	 * controller masters (only joypads) and 30s autosave. */
+	memset(&Settings, 0, sizeof(Settings));
+	Settings.MouseMaster = FALSE;
+	Settings.SuperScopeMaster = FALSE;
+	Settings.JustifierMaster = FALSE;
+	Settings.MultiPlayer5Master = FALSE;
+	Settings.FrameTimePAL = 20000;
+	Settings.FrameTimeNTSC = 16667;
+	Settings.SixteenBitSound = TRUE;
+	Settings.Stereo = TRUE;
+	Settings.SoundPlaybackRate = 48000;
+	Settings.SoundInputRate = 31950;
+	Settings.SoundSync = TRUE;
+	Settings.Transparency = TRUE;
+	Settings.AutoDisplayMessages = TRUE;
+	Settings.InitialInfoStringTimeout = 120;
+	Settings.HDMATimingHack = 100;
+	Settings.BlockInvalidVRAMAccessMaster = TRUE;
+	Settings.StopEmulation = TRUE;
+	Settings.WrongMovieStateProtection = TRUE;
+	Settings.StretchScreenshots = 1;
+	Settings.SnapshotScreenshots = TRUE;
+	Settings.SkipFrames = AUTO_FRAMERATE;
+	Settings.TurboSkipFrames = 15;
+	Settings.AutoSaveDelay = 30;
+	Settings.CartAName[0] = 0;
+	Settings.CartBName[0] = 0;
+}
+
 int main(int argc, char **argv)
 {
-	(void)argc;
-	(void)argv;
-	printf("\nSnes9x " VERSION " for PS2 (scaffold build)\n");
+	printf("\nSnes9x " VERSION " for PS2\n");
+
+	ps2_dirs_init();
+	ps2_apply_settings();
+
+	CPU.Flags = 0;
+	S9xDeleteCheats();
+
+	if (!Memory.Init() || !S9xInitAPU())
+	{
+		printf("Snes9x: Memory allocation failure\n");
+		while (1)
+			;
+	}
+
+	S9xInitSound(0);
+	S9xSetSoundMute(TRUE);
+	ps2_input_init();
+
+	/* ROM: argv[1], else first ROM in the roms/ dir. */
+	const char *rom = (argc > 1) ? argv[1] : ps2_find_rom();
+	if (!rom)
+	{
+		printf("No ROM found. Put ROM files in %s/roms/\n", ps2_base_dir());
+		while (1)
+			;
+	}
+
+	printf("Loading ROM: %s\n", rom);
+
+	if (!Memory.LoadROM(rom))
+	{
+		printf("Error opening ROM: %s\n", rom);
+		while (1)
+			;
+	}
+
+	S9xDeleteCheats();
+	S9xCheatsEnable();
+	Memory.LoadSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+
+	Settings.StopEmulation = FALSE;
+
+	ps2_video_init();
+	S9xSetSoundMute(FALSE);
+
+	printf("Starting emulation\n");
+
+	while (!Settings.StopEmulation)
+	{
+		ps2_input_poll();
+		S9xMainLoop();
+	}
+
+	printf("Saving SRAM: %s\n", S9xGetFilename(".srm", SRAM_DIR).c_str());
+	Memory.SaveSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+
+	audsrv_driver.stop();
+	audsrv_driver.deinit();
+
 	while (1)
 		;
+
 	return 0;
 }
