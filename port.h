@@ -154,7 +154,14 @@ void SetInfoDlgColor(unsigned char, unsigned char, unsigned char);
 
 #if defined(__i386__) || defined(__i486__) || defined(__i586__) || defined(__i686__) || defined(__x86_64__) || defined(__alpha__) || defined(__MIPSEL__) || defined(_M_IX86) || defined(_M_X64) || defined(_XBOX1) || defined(__arm__) || defined(ANDROID) || defined(__aarch64__) || (defined(__BYTE_ORDER__) && __BYTE_ORDER == __ORDER_LITTLE_ENDIAN__)
 #define LSB_FIRST
+/* PS2 port: the R5900 raises an address-error exception on misaligned
+ * halfword/word loads and the PS2 kernel does not fix them up (Linux on
+ * little-endian MIPS does, hence __MIPSEL__ above). SNES memory is read
+ * at arbitrary addresses, so use the byte-wise macros. PCSX2 tolerates
+ * misaligned access, which hides this in emulation. */
+#if !defined(_MIPS_ARCH_R5900)
 #define FAST_LSB_WORD_ACCESS
+#endif
 #else
 #define MSB_FIRST
 #endif

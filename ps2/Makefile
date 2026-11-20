@@ -48,7 +48,7 @@ all: $(EE_BIN)
 # No header dependency tracking in Makefile.eeglobal: rebuild everything
 # when build flags or the pixel format change, so RGB565 and BGR555
 # objects can never be linked together.
-$(EE_OBJS): Makefile ../pixform.h
+$(EE_OBJS): Makefile ../pixform.h ../port.h
 
 clean:
 	rm -f $(EE_OBJS) $(EE_BIN) $(IRX_OBJS:.o=.c)

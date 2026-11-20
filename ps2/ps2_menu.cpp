@@ -387,10 +387,16 @@ void ps2_menu_settings(void)
 	std::string status;
 	bool status_err = false;
 
+	/* Left/Right only browses video modes; X applies the shown one (then
+	 * the keep/revert prompt). Applying on every step would force a
+	 * confirm timeout per mode while scrolling past unwanted ones. */
+	int video_choice = ps2_cfg.video_mode;
+
 	while (1)
 	{
 		std::vector<Row> rows(SET_COUNT);
-		rows[SET_VIDEO] = { "Video mode", std::string("< ") + video_mode_names[ps2_cfg.video_mode] + " >", col_text };
+		rows[SET_VIDEO] = { "Video mode", std::string("< ") + video_mode_names[video_choice] + " >",
+				    video_choice != ps2_cfg.video_mode ? col_title : col_text };
 		rows[SET_FILTER] = { "Screen filter", std::string("< ") + filter_names[ps2_cfg.filter] + " >", col_text };
 		rows[SET_FRAMESKIP] = { "Frame skip", "< " + frameskip_name(ps2_cfg.frameskip) + " >", col_text };
 		rows[SET_FPS] = { "Show FPS", ps2_cfg.show_fps ? "< On >" : "< Off >", col_text };
@@ -412,6 +418,24 @@ void ps2_menu_settings(void)
 			sel = wrap(sel + 1, 0, SET_COUNT - 1);
 		else if (b & (PAD_CIRCLE | PAD_TRIANGLE) || (activate && sel == SET_BACK))
 			break;
+		else if (sel == SET_VIDEO && (dir || activate))
+		{
+			status_err = false;
+			if (dir)
+			{
+				video_choice = wrap(video_choice + dir, 0, PS2_VIDEO_MODE_COUNT - 1);
+				status = video_choice != ps2_cfg.video_mode ? "Press X to apply this video mode" : "";
+			}
+			else if (video_choice != ps2_cfg.video_mode)
+			{
+				int old = ps2_cfg.video_mode;
+				ps2_cfg.video_mode = video_choice;
+				ps2_video_set_mode(video_choice);
+				status = confirm_video_mode(old) ? "" : "Video mode reverted";
+				video_choice = ps2_cfg.video_mode;
+				wait_release();
+			}
+		}
 		else if (dir || activate)
 		{
 			if (activate && dir == 0)
@@ -421,16 +445,6 @@ void ps2_menu_settings(void)
 
 			switch (sel)
 			{
-			case SET_VIDEO:
-			{
-				int old = ps2_cfg.video_mode;
-				ps2_cfg.video_mode = wrap(old + dir, 0, PS2_VIDEO_MODE_COUNT - 1);
-				ps2_video_set_mode(ps2_cfg.video_mode);
-				if (!confirm_video_mode(old))
-					status = "Video mode reverted";
-				wait_release();
-				break;
-			}
 			case SET_FILTER:
 				ps2_cfg.filter = wrap(ps2_cfg.filter + dir, 0, PS2_FILTER_COUNT - 1);
 				ps2_video_set_filter(ps2_cfg.filter);
@@ -459,6 +473,7 @@ void ps2_menu_settings(void)
 							status = "Video mode reverted";
 						wait_release();
 					}
+					video_choice = ps2_cfg.video_mode;
 					if (status.empty())
 						status = "Defaults restored";
 				}
