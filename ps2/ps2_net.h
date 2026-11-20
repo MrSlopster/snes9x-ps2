@@ -1,7 +1,8 @@
 #pragma once
 /* UDP log over the PS2 network adapter, for profiling/debugging on real
- * hardware. IP settings come from OPL's conf_network.cfg (or the common
- * SYS-CONF/IPCONFIG.DAT), else DHCP. Lines are broadcast to the local
+ * hardware. IP settings come from mc0:/SYS-CONF/IPCONFIG.DAT
+ * ("ip netmask gateway", the file ps2link uses), else a static address in
+ * OPL's conf_network.cfg, else DHCP. Lines are broadcast to the local
  * subnet on UDP port PS2_NETLOG_PORT unless ps2.cfg sets netlog_host.
  * Receive with ps2/tools/netlog.py. */
 

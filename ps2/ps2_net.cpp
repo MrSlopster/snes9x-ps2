@@ -122,25 +122,33 @@ static NetSettings find_settings(void)
 	s.dhcp = true;
 	s.ip = s.nm = s.gw = 0;
 
+	/* First choice: the standard homebrew network config,
+	 * "ip netmask gateway" on one line (same file ps2link uses). */
+	static const char *dat[] = { "mc0:/SYS-CONF/IPCONFIG.DAT", "mc1:/SYS-CONF/IPCONFIG.DAT", NULL };
+	for (int i = 0; dat[i]; i++)
+	{
+		NetSettings t = s;
+		if (read_ipconfig_dat(dat[i], t) && t.ip && t.nm)
+		{
+			t.found = true;
+			t.source = dat[i];
+			return t;
+		}
+	}
+
+	/* Then OPL's settings; only a complete static address is taken from
+	 * them. */
 	static const char *opl[] = { "mc0:/OPL/conf_network.cfg", "mc1:/OPL/conf_network.cfg",
 				     "mass0:/OPL/conf_network.cfg", "mass:/OPL/conf_network.cfg", NULL };
 	for (int i = 0; opl[i]; i++)
 	{
 		NetSettings t = s;
-		if (read_opl_config(opl[i], t) && (t.dhcp || (t.ip && t.nm)))
+		if (read_opl_config(opl[i], t) && !t.dhcp && t.ip && t.nm)
 		{
 			t.found = true;
 			t.source = opl[i];
 			return t;
 		}
-	}
-
-	NetSettings t = s;
-	if (read_ipconfig_dat("mc0:/SYS-CONF/IPCONFIG.DAT", t))
-	{
-		t.found = true;
-		t.source = "mc0:/SYS-CONF/IPCONFIG.DAT";
-		return t;
 	}
 
 	s.source = "no config found, using DHCP";
@@ -181,7 +189,12 @@ bool ps2_net_start(void)
 	NetManInit();
 
 	NetSettings s = find_settings();
-	status("Settings:", s.source.c_str());
+	{
+		std::string detail = s.source;
+		if (!s.dhcp)
+			detail = ip_str(s.ip) + " / " + ip_str(s.nm) + " gw " + ip_str(s.gw) + "  (" + s.source + ")";
+		status("Settings:", detail.c_str());
+	}
 
 	struct ip4_addr ip, nm, gw;
 	if (s.dhcp)
