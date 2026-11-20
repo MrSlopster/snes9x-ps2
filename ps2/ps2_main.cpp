@@ -120,35 +120,10 @@ void S9xParseArg(char **argv, int &i, int argc)
 	(void)argc;
 }
 
-/* 1.63 core: S9xGetDirectory/S9xGetFilename/S9xGetFilenameInc return
- * std::string (fscompat.h), unlike the 1.52-era char* API. */
-/* fscompat.cpp already provides both S9xGetFilename overloads and
- * S9xBasename(NoExt); the port provides GetDirectory and GetFilenameInc. */
-std::string S9xGetDirectory(enum s9x_getdirtype t)
-{
-	(void)t;
-	return "mass:/snes9x";
-}
-
-std::string S9xGetFilenameInc(std::string ext, enum s9x_getdirtype t)
-{
-	(void)ext;
-	(void)t;
-	return "";
-}
-
-bool8 S9xOpenSnapshotFile(const char *filepath, bool8 read_only, STREAM *file)
-{
-	(void)filepath;
-	(void)read_only;
-	(void)file;
-	return FALSE;
-}
-
-void S9xCloseSnapshotFile(STREAM file)
-{
-	(void)file;
-}
+/* S9xGetDirectory/S9xGetFilenameInc/S9xOpenSnapshotFile/
+ * S9xCloseSnapshotFile are implemented in ps2_dirs.cpp.
+ * fscompat.cpp already provides both S9xGetFilename overloads and
+ * S9xBasename(NoExt). */
 
 void S9xParsePortConfig(ConfigFile &conf, int pass)
 {
