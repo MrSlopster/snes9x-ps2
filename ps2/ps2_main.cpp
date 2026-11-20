@@ -9,6 +9,7 @@
 #include "controls.h"
 #include "stream.h"
 #include "conffile.h"
+#include "ps2_video.h"
 
 extern "C" {
 #include <kernel.h>
@@ -21,20 +22,22 @@ bool8 S9xInitUpdate(void)
 
 bool8 S9xDeinitUpdate(int width, int height)
 {
-	(void)width;
-	(void)height;
+	ps2_video_frame(GFX.Screen, GFX.RealPPL, width, height);
 	return TRUE;
 }
 
 bool8 S9xContinueUpdate(int width, int height)
 {
-	(void)width;
-	(void)height;
+	ps2_video_frame(GFX.Screen, GFX.RealPPL, width, height);
 	return TRUE;
 }
 
+/* Core calls this once per rendered frame for pacing; the GS vsync is the
+ * display sync and the frame-rate reference (NTSC/PAL follows the console
+ * region set by the GS mode, no hardcoded frame timer here). */
 void S9xSyncSpeed(void)
 {
+	ps2_video_sync();
 }
 
 void S9xAutoSaveSRAM(void)

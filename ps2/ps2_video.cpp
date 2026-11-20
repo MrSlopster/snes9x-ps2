@@ -1,0 +1,203 @@
+/* PS2 GS video output for Snes9x 1.63.
+ *
+ * One 640x448 framebuffer (PSM_32), one RGB565 (GS_PSM_16) texture in VRAM.
+ * Each frame: DMA GFX.Screen to VRAM, draw one textured sprite stretched
+ * over the whole framebuffer, wait for vsync.
+ *
+ * Modeled on ps2sdk samples/draw/texture (graph + draw + draw2d APIs).
+ */
+
+#include <stdlib.h>
+#include <string.h>
+
+#include <tamtypes.h>
+#include <kernel.h>
+#include <dma.h>
+#include <dma_tags.h>
+#include <gif_tags.h>
+#include <gs_psm.h>
+#include <graph.h>
+#include <packet.h>
+#include <draw.h>
+#include <draw2d.h>
+#include <draw3d.h>
+
+#include "ps2_video.h"
+
+#define FB_WIDTH  640
+#define FB_HEIGHT 448
+
+/* Largest SNES frame the core renders: 512 wide x 478 high (PAL interlace).
+ * Staging buffer is 128-byte aligned for the DMA transfer. */
+#define TEX_MAX_W 512
+#define TEX_MAX_H 480
+
+static framebuffer_t fb;
+static zbuffer_t zb;
+static texbuffer_t texbuf;
+static packet_t *draw_packet = NULL;
+static u16 staging[TEX_MAX_W * TEX_MAX_H] __attribute__((aligned(128)));
+static int video_ready = 0;
+
+static void setup_drawing_environment(void)
+{
+	packet_t *packet = packet_init(20, PACKET_NORMAL);
+	qword_t *q = packet->data;
+
+	q = draw_setup_environment(q, 0, &fb, &zb);
+	/* Primitive origin: the draw2d helpers add +2048.0f screen offsets. */
+	q = draw_primitive_xyoffset(q, 0, (2048 - FB_WIDTH / 2), (2048 - FB_HEIGHT / 2));
+	q = draw_finish(q);
+
+	dma_channel_send_normal(DMA_CHANNEL_GIF, packet->data, q - packet->data, 0, 0);
+	dma_wait_fast();
+
+	packet_free(packet);
+}
+
+static void setup_texture_state(void)
+{
+	packet_t *packet = packet_init(10, PACKET_NORMAL);
+	qword_t *q = packet->data;
+
+	lod_t lod;
+	clutbuffer_t clut;
+
+	lod.calculation = LOD_USE_K;
+	lod.max_level = 0;
+	lod.mag_filter = LOD_MAG_LINEAR;
+	lod.min_filter = LOD_MIN_LINEAR;
+	lod.l = 0;
+	lod.k = 0;
+
+	texbuf.info.width = draw_log2(TEX_MAX_W);
+	texbuf.info.height = draw_log2(TEX_MAX_H);
+	texbuf.info.components = TEXTURE_COMPONENTS_RGB;
+	texbuf.info.function = TEXTURE_FUNCTION_DECAL;
+
+	clut.storage_mode = CLUT_STORAGE_MODE1;
+	clut.start = 0;
+	clut.psm = 0;
+	clut.load_method = CLUT_NO_LOAD;
+	clut.address = 0;
+
+	q = draw_texture_sampling(q, 0, &lod);
+	q = draw_texturebuffer(q, 0, &texbuf, &clut);
+
+	dma_channel_send_normal(DMA_CHANNEL_GIF, packet->data, q - packet->data, 0, 0);
+	dma_wait_fast();
+
+	packet_free(packet);
+}
+
+void ps2_video_init(void)
+{
+	memset(&fb, 0, sizeof(fb));
+	memset(&zb, 0, sizeof(zb));
+	memset(&texbuf, 0, sizeof(texbuf));
+
+	/* 32-bit 640x448 framebuffer, no z-buffer (2D blit only). */
+	fb.width = FB_WIDTH;
+	fb.height = FB_HEIGHT;
+	fb.mask = 0;
+	fb.psm = GS_PSM_32;
+	fb.address = graph_vram_allocate(FB_WIDTH, FB_HEIGHT, GS_PSM_32, GRAPH_ALIGN_PAGE);
+
+	zb.enable = DRAW_DISABLE;
+	zb.zsm = GS_ZBUF_32;
+	zb.mask = 1;
+	zb.address = 0;
+
+	/* Texture in VRAM: RGB565, block-aligned. */
+	texbuf.width = TEX_MAX_W;
+	texbuf.psm = GS_PSM_16;
+	texbuf.address = graph_vram_allocate(TEX_MAX_W, TEX_MAX_H, GS_PSM_16, GRAPH_ALIGN_BLOCK);
+
+	graph_initialize(fb.address, fb.width, fb.height, fb.psm, 0, 0);
+
+	dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
+	dma_channel_wait(DMA_CHANNEL_GIF, 0);
+
+	setup_drawing_environment();
+	setup_texture_state();
+
+	video_ready = 1;
+}
+
+void ps2_video_deinit(void)
+{
+	video_ready = 0;
+	if (draw_packet)
+	{
+		packet_free(draw_packet);
+		draw_packet = NULL;
+	}
+	graph_shutdown();
+}
+
+void ps2_video_frame(const unsigned short *src, int src_width, int width, int height)
+{
+	if (!video_ready)
+		return;
+
+	if (width > TEX_MAX_W)
+		width = TEX_MAX_W;
+	if (height > TEX_MAX_H)
+		height = TEX_MAX_H;
+	if (width < 1 || height < 1)
+		return;
+
+	/* Stage into the aligned buffer; the DMA must see a coherent, aligned
+	 * source. GFX.RealPPL may differ from the rendered width (interlace). */
+	for (int y = 0; y < height; y++)
+		memcpy(&staging[y * TEX_MAX_W], &src[y * src_width], width * sizeof(u16));
+
+	if (!draw_packet)
+	{
+		draw_packet = packet_init(120, PACKET_NORMAL);
+		if (!draw_packet)
+			return;
+	}
+
+	qword_t *q = draw_packet->data;
+
+	/* 1. Upload the frame to the texture area of VRAM. */
+	q = draw_texture_transfer(q, staging, TEX_MAX_W, height, GS_PSM_16,
+				  texbuf.address, texbuf.width);
+	q = draw_texture_flush(q);
+
+	/* 2. Draw one textured sprite stretched to the framebuffer. Due to the
+	 * GS DDA, texel 0.5 maps to screen pixel 0, hence the +/- 0.5f texels. */
+	texrect_t rect;
+	rect.v0.x = 0.0f;
+	rect.v0.y = 0.0f;
+	rect.v0.z = 1.0f;
+	rect.v1.x = FB_WIDTH;
+	rect.v1.y = FB_HEIGHT;
+	rect.v1.z = 1.0f;
+	rect.t0.u = 0.5f;
+	rect.t0.v = 0.5f;
+	rect.t1.u = (float)width - 0.5f;
+	rect.t1.v = (float)height - 0.5f;
+	rect.color.r = 0x80;
+	rect.color.g = 0x80;
+	rect.color.b = 0x80;
+	rect.color.a = 0x80;
+	rect.color.q = 1.0f;
+
+	q = draw_rect_textured(q, 0, &rect);
+
+	q = draw_finish(q);
+
+	SyncDCache(staging, (u8 *)staging + sizeof(u16) * TEX_MAX_W * height);
+
+	dma_channel_send_chain(DMA_CHANNEL_GIF, draw_packet->data, q - draw_packet->data, 0, 0);
+	dma_wait_fast();
+}
+
+void ps2_video_sync(void)
+{
+	if (!video_ready)
+		return;
+	graph_wait_vsync();
+}

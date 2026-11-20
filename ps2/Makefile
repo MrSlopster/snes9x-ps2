@@ -14,7 +14,7 @@ EE_LIBS += -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
 
 EE_OBJS = \
-	ps2_main.o \
+	ps2_main.o ps2_video.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \
