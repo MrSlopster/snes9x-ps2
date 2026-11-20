@@ -18,6 +18,7 @@
 #include "ps2_dirs.h"
 #include "ps2_controls.h"
 #include "ps2_iop.h"
+#include "ps2_menu.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
@@ -372,24 +373,53 @@ int main(int argc, char **argv)
 			;
 	}
 
-	/* ROM: argv[1], else first ROM in the roms/ dir. */
-	const char *rom = (argc > 1) ? argv[1] : ps2_find_rom();
-	if (!rom)
-	{
-		printf("No ROM found. Put ROM files in %s/roms/\n", ps2_base_dir());
-		ps2_video_test(0xFF, 0x00, 0xFF);
-		while (1)
-			;
-	}
+	/* ROM: argv[1] when the loader passes one, otherwise the on-screen
+	 * browser (starting in <base>/roms). Without a pad driver the browser
+	 * cannot be used: fall back to the first ROM in <base>/roms. */
+	std::string rom_path = (argc > 1) ? argv[1] : "";
+	std::string load_error, failed_name;
+	std::string start_dir = std::string(ps2_base_dir()) + "/roms";
 
-	printf("Loading ROM: %s\n", rom);
-
-	if (!Memory.LoadROM(rom))
+	while (1)
 	{
-		printf("Error opening ROM: %s\n", rom);
-		ps2_video_test(0xFF, 0x00, 0x00);
-		while (1)
-			;
+		if (rom_path.empty())
+		{
+			rom_path = ps2_menu_pick_rom(start_dir.c_str(),
+						     load_error.empty() ? NULL : load_error.c_str(),
+						     failed_name.empty() ? NULL : failed_name.c_str());
+			if (rom_path.empty())
+			{
+				const char *first = ps2_find_rom();
+				if (first)
+					rom_path = first;
+			}
+		}
+
+		if (rom_path.empty())
+		{
+			printf("No ROM found. Put ROM files in %s/roms/\n", ps2_base_dir());
+			ps2_video_test(0xFF, 0x00, 0xFF);
+			while (1)
+				;
+		}
+
+		printf("Loading ROM: %s\n", rom_path.c_str());
+		if (Memory.LoadROM(rom_path.c_str()))
+			break;
+
+		printf("Error opening ROM: %s\n", rom_path.c_str());
+		if (!ps2_controls_available())
+		{
+			ps2_video_test(0xFF, 0x00, 0x00);
+			while (1)
+				;
+		}
+
+		/* Back to the browser, in the folder of the failed file. */
+		failed_name = rom_path.substr(rom_path.rfind('/') + 1);
+		load_error = "Could not load " + failed_name;
+		start_dir = rom_path.substr(0, rom_path.rfind('/') + 1);
+		rom_path.clear();
 	}
 
 	S9xDeleteCheats();

@@ -13,7 +13,8 @@ SA-1, SuperFX, MSU-1 support, ...) applies automatically.
 ## What works (v1)
 
 - ROM loading: `.sfc`, `.smc`, `.zip`, `.jma`, `.bin`, `.fig`, `.swc`
-- Video through the Graphics Synthesizer, 640x448, stretch-scaled,
+- Video through the Graphics Synthesizer, 640x448 (NTSC) / 640x512 (PAL),
+  stretch-scaled,
   double-buffered and flipped at vblank (no tearing, no blocking)
 - Audio through `audsrv` (48 kHz stereo), sound-sync throttling
 - Two digital pads mapped to SNES joypads (multitap is a follow-up; v1
@@ -78,8 +79,19 @@ needs it is skipped (no audio / no pads) rather than hanging boot.
    - **USB**: `mass:/BOOT/BOOT.ELF` style, or via OPL / wLaunchELF
    - **Memory card**: boot from a bootable ELF launcher
 
-3. The emulator boots to a console printout; it loads `argv[1]` when the
-   loader passes one, otherwise the first ROM found in `roms/`.
+3. The emulator loads `argv[1]` when the loader passes one. Otherwise it
+   opens an on-screen ROM browser in `<base>/snes9x/roms/` (or the device
+   list if that folder doesn't exist). It lists USB drives (`mass0:`,
+   `mass1:`, ...), memory cards (`mc0:`, `mc1:`) and `host:`, showing folders
+   and ROM files only. A ROM that fails to load returns to the browser with
+   the error shown. SMB/network shares are not supported.
+
+   | Button          | Browser                     |
+   |-----------------|-----------------------------|
+   | D-pad up/down   | move                        |
+   | L1/R1, left/right | page                      |
+   | Cross           | open folder / load ROM      |
+   | Circle/Triangle | parent folder / device list |
 
 ### Controls
 

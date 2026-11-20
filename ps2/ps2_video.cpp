@@ -1,6 +1,7 @@
 /* PS2 GS video output for Snes9x 1.63.
  *
- * VRAM: two 640x448 PSMCT32 framebuffers + one 512x480 PSMCT16 texture.
+ * VRAM: two 640x448 (NTSC) / 640x512 (PAL) PSMCT32 framebuffers + one
+ * 512x480 PSMCT16 texture (3.1 MB of 4 MB worst case).
  *
  * The core renders straight into the GS's native 16-bit layout
  * (PIXEL_FORMAT=BGR555, see pixform.h), so a frame needs no CPU-side
@@ -37,7 +38,12 @@
 #include "ps2_video.h"
 
 #define FB_WIDTH  640
-#define FB_HEIGHT 448
+
+/* Display height follows the console's video region: graph_initialize
+ * programs a 640x448 (NTSC) or 640x512 (PAL) display area. A 448-line
+ * framebuffer on PAL leaves a black bar at the bottom. */
+static int fb_height = 448;
+#define FB_HEIGHT fb_height
 
 /* Largest SNES frame the core renders: 512 wide x 478 high (PAL interlace).
  * 512*480 PSMCT16 = 30720 qwords: fits one IMAGE GIF tag (NLOOP <= 0x7FFF)
@@ -204,7 +210,9 @@ void ps2_video_init(void)
 	memset(&zb, 0, sizeof(zb));
 	memset(&texbuf, 0, sizeof(texbuf));
 
-	/* Two 32-bit 640x448 framebuffers (2 x 1.1 MB), no z-buffer. */
+	fb_height = (graph_get_region() == GRAPH_MODE_PAL) ? 512 : 448;
+
+	/* Two 32-bit 640xH framebuffers (2 x 1.1-1.3 MB), no z-buffer. */
 	for (int i = 0; i < 2; i++)
 	{
 		fb[i].width = FB_WIDTH;

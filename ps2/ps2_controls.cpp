@@ -124,7 +124,8 @@ void ps2_input_poll(void)
 
     for (int port = 0; port < 2; port++)
     {
-        if (padGetState(port, 0) != PAD_STATE_STABLE)
+        int state = padGetState(port, 0);
+        if (state != PAD_STATE_STABLE && state != PAD_STATE_FINDCTP1)
         {
             /* Keep the last reported state while the pad is being found. */
             continue;
@@ -135,4 +136,26 @@ void ps2_input_poll(void)
 
         report_port(port, status.btns);
     }
+}
+
+unsigned ps2_pad_held(int port)
+{
+    if (!pads_ready || port < 0 || port > 1)
+        return 0;
+
+    int state = padGetState(port, 0);
+    if (state != PAD_STATE_STABLE && state != PAD_STATE_FINDCTP1)
+        return 0;
+
+    struct padButtonStatus status;
+    if (padRead(port, 0, &status) == 0)
+        return 0;
+
+    /* libpad reports active-low; callers want pressed = 1. */
+    return (unsigned)(0xFFFF ^ status.btns) & 0xFFFF;
+}
+
+bool ps2_controls_available(void)
+{
+    return pads_ready;
 }
