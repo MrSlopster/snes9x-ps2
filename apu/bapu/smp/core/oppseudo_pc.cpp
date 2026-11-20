@@ -3,6 +3,9 @@ case 0x2f: {
   if(0){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -11,6 +14,9 @@ case 0xf0: {
   if(!regs.p.z){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -19,6 +25,9 @@ case 0xd0: {
   if(regs.p.z){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -27,6 +36,9 @@ case 0xb0: {
   if(!regs.p.c){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -35,6 +47,9 @@ case 0x90: {
   if(regs.p.c){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -43,6 +58,9 @@ case 0x70: {
   if(!regs.p.v){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -51,6 +69,9 @@ case 0x50: {
   if(regs.p.v){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -59,6 +80,9 @@ case 0x30: {
   if(!regs.p.n){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 
@@ -67,6 +91,9 @@ case 0x10: {
   if(regs.p.n){ break; }
   op_io(2);
   regs.pc += (int8)rd;
+#ifdef _EE
+  ee_idle_check((int8)rd);
+#endif
   break;
 }
 

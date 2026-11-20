@@ -1,6 +1,7 @@
 void SMP::tick() {
 #ifdef _EE
   timer_pending++;
+  ee_cycles++;
 #else
   timer0.tick();
   timer1.tick();
@@ -14,6 +15,7 @@ void SMP::tick() {
 void SMP::tick(unsigned clocks) {
 #ifdef _EE
   timer_pending += clocks;
+  ee_cycles += clocks;
 #else
   timer0.tick(clocks);
   timer1.tick(clocks);

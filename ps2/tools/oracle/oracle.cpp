@@ -238,6 +238,8 @@ int main(int argc, char **argv)
 #ifdef ORACLE_IDLE_STATS
 	fprintf(stderr, "idle: plain skips %u, handshake skips %u (%u passes)\n", ps2_idle_plain_skips,
 		ps2_idle_handshake_skips, ps2_idle_handshake_passes);
+	fprintf(stderr, "spc700 idle: %u skips, %.1f%% of %u cycles\n", SNES::smp.ee_idle_skips,
+		100.0 * SNES::smp.ee_idle_skipped_cycles / (SNES::smp.ee_cycles ? SNES::smp.ee_cycles : 1), SNES::smp.ee_cycles);
 #endif
 	return 0;
 }

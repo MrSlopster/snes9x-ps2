@@ -86,6 +86,7 @@ void SMP::reset() {
   timer0.stage3_ticks = timer1.stage3_ticks = timer2.stage3_ticks = 0;
 #ifdef _EE
   timer_pending = 0;
+  ee_idle_last.valid = false;
 #endif
 }
 
@@ -93,6 +94,9 @@ SMP::SMP() {
   apuram = new uint8[64 * 1024];
 #ifdef _EE
   timer_pending = 0;
+  ee_cycles = 0;
+  ee_idle_last.valid = false;
+  ee_idle_skips = ee_idle_skipped_cycles = 0;
 #endif
 }
 

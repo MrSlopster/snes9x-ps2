@@ -31,6 +31,7 @@ struct SMP
 	unsigned timer_pending;
 	void timers_sync();
 };
+#define SMP_TIMERS_ONLY /* skip the idle-loop code: it needs the full SMP */
 #include "../../apu/bapu/smp/timing.cpp"
 }
 

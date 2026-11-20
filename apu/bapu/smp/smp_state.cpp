@@ -138,6 +138,7 @@ void SMP::save_state(uint8 **block) {
 void SMP::load_state(uint8 **block) {
 #ifdef _EE
   timer_pending = 0;
+  ee_idle_last.valid = false;
 #endif
   uint8 *ptr = *block;
   memcpy(apuram, ptr, 64 * 1024);

@@ -104,6 +104,23 @@ public:
    * save state). Bit-identical to ticking every cycle. */
   unsigned timer_pending;
   void timers_sync();
+
+  /* PS2 port: SPC700 idle-loop skipping (timing.cpp). Sound drivers spend
+   * most of their time polling a timer counter or an input port
+   * ("MOV Y,$FD / BEQ"). ee_idle_check() runs after a taken short backward
+   * branch; when two consecutive passes left identical registers and the
+   * body only loads/compares immediates, $f4-$f7 or $fd-$ff, whole passes
+   * are skipped - never past the end of the current slice, and stopping
+   * at least one pass before any polled timer's next tick. */
+  unsigned ee_cycles;        /* monotonic cycle count (tick) */
+  struct {
+    bool valid;
+    uint16 pc;
+    uint8 a, x, y, sp, psw;
+    unsigned cycles;
+  } ee_idle_last;
+  void ee_idle_check(int displacement);
+  unsigned ee_idle_skips, ee_idle_skipped_cycles; /* statistics */
 #endif
 
   inline void tick();

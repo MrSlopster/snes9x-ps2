@@ -821,7 +821,14 @@ inline VOICE_CLOCK( V3c )
 
 	// Gaussian interpolation
 	{
+#ifdef _EE
+		/* PS2 port: env == 0 makes t_output exactly 0 below whatever the
+		 * sample is, and interpolate() has no side effects: skip it for
+		 * silent voices. */
+		int output = v->env ? interpolate( v ) : 0;
+#else
 		int output = interpolate( v );
+#endif
 
 		// Noise
 		if ( m.t_non & v->vbit )
