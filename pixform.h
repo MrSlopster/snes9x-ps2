@@ -61,6 +61,38 @@
 #define THIRD_COLOR_MASK_RGB555   0x001F
 #define ALPHA_BITS_MASK_RGB555    0x0000
 
+/* BGR555 format (PS2 port: the GS PSMCT16 layout, R in bits 0-4).
+ * Same field geometry as RGB555, with red and blue swapped. All of the
+ * core's colour math (COLOR_ADD/SUB, brightness, ZERO table) treats the
+ * first and third fields identically, so the masks below are RGB555's
+ * verbatim: the "RED_*" names refer to the top field, which holds blue
+ * here. Only BUILD/DECOMPOSE need to know which channel lives where. */
+#define BUILD_PIXEL_BGR555(R, G, B)  (((int)(B) << 10) | ((int)(G) << 5) | (int)(R))
+#define BUILD_PIXEL2_BGR555(R, G, B) (((int)(B) << 10) | ((int)(G) << 5) | (int)(R))
+#define DECOMPOSE_PIXEL_BGR555(PIX, R, G, B) \
+    {                                        \
+        (B) = (PIX) >> 10;                   \
+        (G) = ((PIX) >> 5) & 0x1f;           \
+        (R) = (PIX)&0x1f;                    \
+    }
+#define SPARE_RGB_BIT_MASK_BGR555 SPARE_RGB_BIT_MASK_RGB555
+
+#define MAX_RED_BGR555            MAX_RED_RGB555
+#define MAX_GREEN_BGR555          MAX_GREEN_RGB555
+#define MAX_BLUE_BGR555           MAX_BLUE_RGB555
+#define RED_SHIFT_BITS_BGR555     RED_SHIFT_BITS_RGB555
+#define GREEN_SHIFT_BITS_BGR555   GREEN_SHIFT_BITS_RGB555
+#define RED_LOW_BIT_MASK_BGR555   RED_LOW_BIT_MASK_RGB555
+#define GREEN_LOW_BIT_MASK_BGR555 GREEN_LOW_BIT_MASK_RGB555
+#define BLUE_LOW_BIT_MASK_BGR555  BLUE_LOW_BIT_MASK_RGB555
+#define RED_HI_BIT_MASK_BGR555    RED_HI_BIT_MASK_RGB555
+#define GREEN_HI_BIT_MASK_BGR555  GREEN_HI_BIT_MASK_RGB555
+#define BLUE_HI_BIT_MASK_BGR555   BLUE_HI_BIT_MASK_RGB555
+#define FIRST_COLOR_MASK_BGR555   FIRST_COLOR_MASK_RGB555
+#define SECOND_COLOR_MASK_BGR555  SECOND_COLOR_MASK_RGB555
+#define THIRD_COLOR_MASK_BGR555   THIRD_COLOR_MASK_RGB555
+#define ALPHA_BITS_MASK_BGR555    ALPHA_BITS_MASK_RGB555
+
 #define CONCAT(X, Y) X##Y
 
 // C pre-processor needs a two stage macro define to enable it to concat

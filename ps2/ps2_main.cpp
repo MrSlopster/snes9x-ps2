@@ -21,17 +21,46 @@
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
 
+/* Resampler capacity requested from S9xInitSound, in ms of output. Must
+ * comfortably exceed one AUDIO_BATCH (plus the core's 48-sample landing
+ * granularity) or the DSP would overrun it between drains. */
+#define AUDIO_BUFFER_MS 32
+
+/* int16 values (stereo interleaved) per audsrv push: 1024 = 512 frames =
+ * 10.7 ms at 48 kHz, ~1.6 pushes per 60 Hz frame (1600 values/frame). */
+#define AUDIO_BATCH 1024
+
+/* Only look at the sample count on every Nth callback. The callback fires
+ * on nearly every scanline while samples accumulate, and
+ * S9xGetSampleCount() does double-precision maths, which the R5900 FPU
+ * (single precision only) runs in software. One scanline lands ~4 input
+ * values, so 16 calls overshoot a batch by < 70 values: well inside the
+ * AUDIO_BUFFER_MS resampler. */
+#define AUDIO_POLL_EVERY 16
+
 /* Core pushes samples through this callback (registered with
- * S9xSetSamplesAvailableCallback); we drain the resampler into audsrv. */
+ * S9xSetSamplesAvailableCallback); we drain the resampler into audsrv.
+ *
+ * The core calls this whenever 48 samples are pending, i.e. ~33 times per
+ * frame. Every drain is two blocking SIF RPCs to the IOP
+ * (audsrv_wait_audio + audsrv_play_audio), so draining at that rate burns
+ * a large slice of the EE frame on IOP round trips. Let the resampler
+ * accumulate and push in AUDIO_BATCH chunks instead. */
 static void ps2_samples_available(void *)
 {
 	if (!ps2_sound_ok || Settings.Mute)
 		return;
 
 	static unsigned char sound_buffer[32 * 1024];
+	static unsigned calls = 0;
+
+	if (++calls < AUDIO_POLL_EVERY)
+		return;
+	calls = 0;
+
 	int samples = S9xGetSampleCount();
 
-	if (samples <= 0)
+	if (samples < AUDIO_BATCH)
 		return;
 	if (samples > (int)(sizeof(sound_buffer) / 2))
 		samples = sizeof(sound_buffer) / 2;
@@ -318,7 +347,7 @@ int main(int argc, char **argv)
 			;
 	}
 
-	S9xInitSound(0);
+	S9xInitSound(AUDIO_BUFFER_MS);
 	S9xSetSoundMute(TRUE);
 	ps2_input_init();
 

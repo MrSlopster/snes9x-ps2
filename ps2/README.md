@@ -6,13 +6,15 @@ A port of the current upstream **Snes9x 1.63** core
 (BoGanon/snes9x).
 
 All port code lives in this directory. The upstream emulation core is used
-unmodified, so every accuracy fix from the last 15 years (PPU, APU, DSP,
+essentially unmodified (two small, documented edits; see "Repo
+relationship"), so every accuracy fix from the last 15 years (PPU, APU, DSP,
 SA-1, SuperFX, MSU-1 support, ...) applies automatically.
 
 ## What works (v1)
 
 - ROM loading: `.sfc`, `.smc`, `.zip`, `.jma`, `.bin`, `.fig`, `.swc`
-- RGB565 video through the Graphics Synthesizer, 640x448, stretch-scaled
+- Video through the Graphics Synthesizer, 640x448, stretch-scaled,
+  double-buffered and flipped at vblank (no tearing, no blocking)
 - Audio through `audsrv` (48 kHz stereo), sound-sync throttling
 - Two digital pads mapped to SNES joypads (multitap is a follow-up; v1
   opens two controller ports only)
@@ -90,7 +92,9 @@ slot 1), then `host:` (ps2link). All three mounts are probed at startup.
 - Pads are locked to digital mode. Multitap is not usable in v1 (only two
   controller ports are opened); its detection is a follow-up.
 - Audio buffers are audsrv-managed; when the ring fills up the emulator
-  throttles in the samples-available callback. When no sound device is
+  throttles in the samples-available callback. Samples are pushed to the
+  IOP in ~10.7 ms batches (`AUDIO_BATCH`), not on every 48-sample core
+  callback: each push is two blocking SIF RPCs. When no sound device is
   available the port paces with wall-clock timing and unix-style auto
   frameskip (`Settings.SkipFrames = AUTO_FRAMERATE`).
 - If neither USB nor memcard mounts resolve, the port falls back to
@@ -100,16 +104,32 @@ slot 1), then `host:` (ps2link). All three mounts are probed at startup.
 
 - **Performance is untested on hardware.** The 1.63 core does more per
   frame than the 2011 1.53 core; frame-rate comparison against the old fork
-  is a hardware test item. The main v1 wins over the old fork: no core
-  hacks to maintain, single pixel format, DMA-friendly staging.
-- Follow-up optimization hooks: VU0/DMA-assisted scaling, uncached staging
-  audit (`SyncDCache` currently covers the whole staged frame), frame-skip
-  policy tuning, `-Ofast` evaluation.
+  is a hardware test item.
+- PS2-specific work already done in the port layer:
+  - The core renders `BGR555`, which is the GS PSMCT16 layout, so frames
+    need no CPU colour conversion.
+  - Frames are uploaded zero-copy: one DMA chain whose REF tags point
+    straight at `GFX.Screen` rows, sending only the rendered width.
+    `FlushCache(0)` (a fixed 8 KB D-cache walk) replaces a per-line
+    `SyncDCache` over the frame.
+  - Display flips happen in the vblank interrupt, so the emulator never
+    waits on the TV.
+  - Audio is batched to cut IOP round trips about tenfold.
+- Follow-up candidates that need hardware measurement first: `-O2` vs
+  `-O3` (the R5900 has a 16 KB I-cache, so -O3 inlining can lose), 240p
+  non-interlaced output (halves VRAM and fill, sharper image, TV
+  compatibility to check), `-ffunction-sections`/`--gc-sections` to shed
+  unused core code (filters, netplay), frame-skip policy tuning.
 - Save-state format is upstream 1.63 (incompatible with 2011 fork states).
 
 ## Repo relationship
 
-- `snes9x-1.63-ps2` = upstream master + `ps2/` port directory (+ one
-  documented portability edit in `memmap.cpp` (`XPSdecode` signature); see
-  the commit history).
+- `snes9x-1.63-ps2` = upstream master + `ps2/` port directory, plus two
+  core edits:
+  - `memmap.cpp`: `XPSdecode` signature (portability; see the commit
+    history).
+  - `pixform.h`: an additive `BGR555` pixel format (selected by the PS2
+    Makefile only). It reuses RGB555's masks because the core's colour
+    math treats the two outer fields identically; `tests/test_pixform.cpp`
+    checks that property over ~6.3M operand pairs.
 - The 2011 fork (`BoGanon/snes9x`) is kept as reference only.

@@ -5,7 +5,8 @@ EE_OPTFLAGS = -O3
 
 SNES9X_FLAGS := -DZLIB -DUNZIP_SUPPORT -DJMA_SUPPORT -DSDD1_DECOMP \
 	-DHAVE_STDINT_H -DHAVE_STRINGS_H -DIOAPI_NO_64 \
-	-DVERSION=\"1.63\"
+	-DVERSION=\"1.63\" \
+	-DPIXEL_FORMAT=BGR555
 
 # EE performance profile carried over from the 2011 fork (spec §Build):
 # R5900 pipeline tuning + hard float + single-precision fast math.
@@ -22,7 +23,7 @@ EE_LIBS += -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
 
 EE_OBJS = \
-	ps2_main.o ps2_video.o ps2_video_convert.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \
@@ -37,6 +38,11 @@ EE_OBJS = \
 	s9x-jma.o 7zlzma.o crc32.o iiostrm.o inbyte.o jma.o lzma.o lzmadec.o winout.o
 
 all: $(EE_BIN)
+
+# No header dependency tracking in Makefile.eeglobal: rebuild everything
+# when build flags or the pixel format change, so RGB565 and BGR555
+# objects can never be linked together.
+$(EE_OBJS): Makefile ../pixform.h
 
 clean:
 	rm -f $(EE_OBJS) $(EE_BIN)
