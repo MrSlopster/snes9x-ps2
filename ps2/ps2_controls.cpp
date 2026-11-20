@@ -17,6 +17,7 @@ extern "C" {
 #include <stdio.h>
 
 #include "ps2_controls.h"
+#include "ps2_input_map.h"
 #include "snes9x.h"
 #include "controls.h"
 
@@ -91,6 +92,10 @@ void ps2_input_init(void)
          * digital locking avoids the DS2 mode-switch dialog quirks. */
         padSetMainMode(port, 0, PAD_MMODE_DIGITAL, PAD_MMODE_LOCK);
     }
+
+    /* Without S9xMapButton registration S9xReportButton is a no-op, so
+     * this is what actually connects the pads to the core. */
+    ps2_input_map_buttons();
 
     S9xSetController(0, CTL_JOYPAD, 0, 0, 0, 0);
     S9xSetController(1, CTL_JOYPAD, 1, 0, 0, 0);

@@ -7,8 +7,13 @@ SNES9X_FLAGS := -DZLIB -DUNZIP_SUPPORT -DJMA_SUPPORT -DSDD1_DECOMP \
 	-DHAVE_STDINT_H -DHAVE_STRINGS_H -DIOAPI_NO_64 \
 	-DVERSION=\"1.63\"
 
-EE_CFLAGS += $(SNES9X_FLAGS)
-EE_CXXFLAGS += $(SNES9X_FLAGS) -fno-rtti -fno-exceptions
+# EE performance profile carried over from the 2011 fork (spec §Build):
+# R5900 pipeline tuning + hard float + single-precision fast math.
+EE_CFLAGS += $(SNES9X_FLAGS) -mtune=r5900 -mhard-float \
+	-fsingle-precision-constant -mfused-madd -ffast-math
+EE_CXXFLAGS += $(SNES9X_FLAGS) -mtune=r5900 -mhard-float \
+	-fsingle-precision-constant -mfused-madd -ffast-math \
+	-fno-rtti -fno-exceptions
 EE_INCS += -I.. -I../apu -I../unzip -I../jma -I$(PS2SDK)/ports/include
 EE_LDFLAGS += -L$(PS2SDK)/ports/lib
 EE_LIBS += -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
@@ -17,7 +22,7 @@ EE_LIBS += -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
 
 EE_OBJS = \
-	ps2_main.o ps2_video.o ps2_controls.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_video.o ps2_video_convert.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \

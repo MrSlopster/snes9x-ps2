@@ -14,7 +14,8 @@ SA-1, SuperFX, MSU-1 support, ...) applies automatically.
 - ROM loading: `.sfc`, `.smc`, `.zip`, `.jma`, `.bin`, `.fig`, `.swc`
 - RGB565 video through the Graphics Synthesizer, 640x448, stretch-scaled
 - Audio through `audsrv` (48 kHz stereo), sound-sync throttling
-- Two digital pads (+ optional multitap) mapped to SNES joypads
+- Two digital pads mapped to SNES joypads (multitap is a follow-up; v1
+  opens two controller ports only)
 - SRAM saves (auto-saved every 30 s and on shutdown)
 - Save states, SPC dumps, IPS/BPS patching (core features, file-based)
 - MSU-1 (file-based; no port work needed)
@@ -41,9 +42,9 @@ docker run --rm -v "$PWD":/src -w /src/ps2 localhost/snes9x-ps2build make -j8
 
 Output: `ps2/snes9x.elf` (EE, ~3.2 MB loadable).
 
-Compiler profile: `-O3 -mtune=r5900 -mhard-float` (r5900 pipeline tuning,
-hard float, single-precision constants). `-Ofast` is a candidate for later
-hardware testing only.
+Compiler profile: `-O3 -mtune=r5900 -mhard-float -fsingle-precision-constant
+-mfused-madd -ffast-math` (R5900 pipeline tuning, hard float). `-Ofast` is a
+candidate for later hardware testing only.
 
 ## Deploying / testing on hardware
 
@@ -86,11 +87,12 @@ slot 1), then `host:` (ps2link). All three mounts are probed at startup.
 
 ### Notes
 
-- Pads are locked to digital mode; multitap is detected best-effort and
-  silently falls back to two pads.
+- Pads are locked to digital mode. Multitap is not usable in v1 (only two
+  controller ports are opened); its detection is a follow-up.
 - Audio buffers are audsrv-managed; when the ring fills up the emulator
-  throttles in the samples-available callback (no frame-skipping logic yet —
-  the core's `Settings.SkipFrames = AUTO_FRAMERATE` handles slow games).
+  throttles in the samples-available callback. When no sound device is
+  available the port paces with wall-clock timing and unix-style auto
+  frameskip (`Settings.SkipFrames = AUTO_FRAMERATE`).
 - If neither USB nor memcard mounts resolve, the port falls back to
   `host:/snes9x` which only exists under ps2link.
 
@@ -107,7 +109,7 @@ slot 1), then `host:` (ps2link). All three mounts are probed at startup.
 
 ## Repo relationship
 
-- `snes9x-1.63-ps2` = upstream master + `ps2/` port directory (+ two
-  documented portability token edits in `memmap.cpp`; see the commit
-  history).
+- `snes9x-1.63-ps2` = upstream master + `ps2/` port directory (+ one
+  documented portability edit in `memmap.cpp` (`XPSdecode` signature); see
+  the commit history).
 - The 2011 fork (`BoGanon/snes9x`) is kept as reference only.

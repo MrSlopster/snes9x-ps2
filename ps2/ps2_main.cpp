@@ -1,11 +1,13 @@
 /* PS2 port of Snes9x 1.63 - stub port layer (scaffold) */
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "snes9x.h"
 #include "memmap.h"
 #include "apu.h"
 #include "gfx.h"
+#include "ppu.h"
 #include "controls.h"
 #include "cheats.h"
 #include "stream.h"
@@ -17,12 +19,13 @@
 #include "ps2_controls.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
+static bool ps2_sound_ok = false;
 
 /* Core pushes samples through this callback (registered with
  * S9xSetSamplesAvailableCallback); we drain the resampler into audsrv. */
 static void ps2_samples_available(void *)
 {
-	if (!Settings.SoundPlaybackRate || Settings.Mute)
+	if (!ps2_sound_ok || Settings.Mute)
 		return;
 
 	static unsigned char sound_buffer[32 * 1024];
@@ -32,6 +35,17 @@ static void ps2_samples_available(void *)
 		return;
 	if (samples > (int)(sizeof(sound_buffer) / 2))
 		samples = sizeof(sound_buffer) / 2;
+
+	if (Settings.TurboMode || !Settings.SoundSync)
+	{
+		/* Never block when pacing doesn't apply: write only what the
+		 * audsrv ring accepts right now, drop the rest. */
+		int max_samples = audsrv_driver.space_free() / 2;
+		if (max_samples <= 0)
+			return;
+		if (samples > max_samples)
+			samples = max_samples;
+	}
 
 	S9xMixSamples(sound_buffer, samples);
 	audsrv_driver.write_samples((int16_t *)sound_buffer, samples);
@@ -58,12 +72,91 @@ bool8 S9xContinueUpdate(int width, int height)
 	return TRUE;
 }
 
-/* Core calls this once per rendered frame for pacing; the GS vsync is the
- * display sync and the frame-rate reference (NTSC/PAL follows the console
- * region set by the GS mode, no hardcoded frame timer here). */
+/* Core calls this once per rendered frame. Ported from unix/unix.cpp
+ * S9xSyncSpeed: with a live sound device, the blocking audsrv ring write
+ * is the throttle (unix's SoundSync path); otherwise pace by wall clock
+ * with unix-style auto frameskip. The GS vsync wait stays inside the
+ * video blit as display sync only - it is never the sole frame timer, so
+ * PAL/NTSC region changes cannot freeze the port. */
 void S9xSyncSpeed(void)
 {
-	ps2_video_sync();
+	if (Settings.TurboMode)
+	{
+		if ((++IPPU.FrameSkip >= Settings.TurboSkipFrames) && !Settings.HighSpeedSeek)
+		{
+			IPPU.FrameSkip = 0;
+			IPPU.SkippedFrames = 0;
+			IPPU.RenderThisFrame = TRUE;
+		}
+		else
+		{
+			IPPU.SkippedFrames++;
+			IPPU.RenderThisFrame = FALSE;
+		}
+
+		if (ps2_sound_ok && Settings.SoundSync)
+			return;
+	}
+
+	if (Settings.SoundSync && ps2_sound_ok)
+		return;
+
+	static struct timespec next1 = { 0, 0 };
+	struct timespec now;
+
+	while (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		;
+
+	if (next1.tv_sec == 0)
+	{
+		next1 = now;
+		next1.tv_nsec += 1000000;
+	}
+
+	/* AUTO_FRAMERATE: render everything when there is spare time,
+	 * otherwise render 1-in-10 while catching up (unix logic). */
+	bool late = (next1.tv_sec < now.tv_sec) ||
+		    (next1.tv_sec == now.tv_sec && next1.tv_nsec < now.tv_nsec);
+	unsigned limit = (Settings.SkipFrames == AUTO_FRAMERATE)
+				 ? (late ? 10 : 1)
+				 : (unsigned)Settings.SkipFrames;
+
+	IPPU.RenderThisFrame = (++IPPU.SkippedFrames >= limit) ? TRUE : FALSE;
+
+	if (IPPU.RenderThisFrame)
+		IPPU.SkippedFrames = 0;
+	else if (late)
+	{
+		uint64 lag_us = (uint64)(now.tv_sec - next1.tv_sec) * 1000000 +
+				(now.tv_nsec - next1.tv_nsec) / 1000;
+		if (lag_us >= 500000)
+		{
+			/* Half a second behind means a pause happened; resync
+			 * instead of fast-forwarding. */
+			next1 = now;
+		}
+	}
+
+	/* Sleep until this frame's target time in small slices. */
+	while (1)
+	{
+		while (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+			;
+		if (now.tv_sec > next1.tv_sec ||
+		    (now.tv_sec == next1.tv_sec && now.tv_nsec >= next1.tv_nsec))
+			break;
+
+		struct timespec slice = { 0, 200000 }; /* 0.2 ms */
+		nanosleep(&slice, NULL);
+	}
+
+	/* Next frame target: Settings.FrameTime is in microseconds. */
+	next1.tv_nsec += (long)Settings.FrameTime * 1000;
+	while (next1.tv_nsec >= 1000000000)
+	{
+		next1.tv_sec++;
+		next1.tv_nsec -= 1000000000;
+	}
 }
 
 void S9xAutoSaveSRAM(void)
@@ -94,12 +187,13 @@ bool8 S9xOpenSoundDevice(void)
 	if (!audsrv_driver.open_device(Settings.SoundPlaybackRate, 96))
 	{
 		audsrv_driver.deinit();
-		printf("Failed to open audsrv sound device - muting.\n");
+		printf("Failed to open audsrv sound device - falling back to wall-clock pacing.\n");
 		return FALSE;
 	}
 
 	S9xSetSamplesAvailableCallback(ps2_samples_available, NULL);
 	audsrv_driver.start();
+	ps2_sound_ok = true;
 	return TRUE;
 }
 
@@ -221,6 +315,15 @@ int main(int argc, char **argv)
 	S9xSetSoundMute(TRUE);
 	ps2_input_init();
 
+	/* Allocates GFX.Screen and the renderer buffers; without it the first
+	 * rendered frame writes through a NULL pointer. */
+	if (!S9xGraphicsInit())
+	{
+		printf("Snes9x: graphics init failed (out of memory)\n");
+		while (1)
+			;
+	}
+
 	/* ROM: argv[1], else first ROM in the roms/ dir. */
 	const char *rom = (argc > 1) ? argv[1] : ps2_find_rom();
 	if (!rom)
@@ -258,6 +361,10 @@ int main(int argc, char **argv)
 
 	printf("Saving SRAM: %s\n", S9xGetFilename(".srm", SRAM_DIR).c_str());
 	Memory.SaveSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+
+	ps2_sound_ok = false;
+	S9xGraphicsDeinit();
+	ps2_video_deinit();
 
 	audsrv_driver.stop();
 	audsrv_driver.deinit();

@@ -23,6 +23,7 @@
 #include <draw3d.h>
 
 #include "ps2_video.h"
+#include "ps2_video_convert.h"
 
 #define FB_WIDTH  640
 #define FB_HEIGHT 448
@@ -45,8 +46,9 @@ static void setup_drawing_environment(void)
 	qword_t *q = packet->data;
 
 	q = draw_setup_environment(q, 0, &fb, &zb);
-	/* Primitive origin: the draw2d helpers add +2048.0f screen offsets. */
-	q = draw_primitive_xyoffset(q, 0, (2048 - FB_WIDTH / 2), (2048 - FB_HEIGHT / 2));
+	/* draw_setup_environment already sets XYOFFSET to (2048, 2048), which
+	 * is what 0-based 2D sprite coordinates need (the draw2d helpers add
+	 * the +2048 screen offsets themselves). */
 	q = draw_finish(q);
 
 	dma_channel_send_normal(DMA_CHANNEL_GIF, packet->data, q - packet->data, 0, 0);
@@ -147,10 +149,11 @@ void ps2_video_frame(const unsigned short *src, int src_width, int width, int he
 	if (width < 1 || height < 1)
 		return;
 
-	/* Stage into the aligned buffer; the DMA must see a coherent, aligned
-	 * source. GFX.RealPPL may differ from the rendered width (interlace). */
-	for (int y = 0; y < height; y++)
-		memcpy(&staging[y * TEX_MAX_W], &src[y * src_width], width * sizeof(u16));
+	/* Stage into the aligned buffer, converting 565 -> GS PSM 16 (5551):
+	 * the GS has no RGB565 texture format. GFX.RealPPL may differ from
+	 * the rendered width (interlace). */
+	ps2_convert_frame_565_to_5551(staging, TEX_MAX_W, src, src_width,
+				      width, height);
 
 	if (!draw_packet)
 	{
