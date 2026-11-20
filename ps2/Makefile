@@ -1,5 +1,8 @@
 EE_BIN = snes9x.elf
 
+# Baseline optimization: -O3 (spec); -Ofast left for hardware testing.
+EE_OPTFLAGS = -O3
+
 SNES9X_FLAGS := -DZLIB -DUNZIP_SUPPORT -DJMA_SUPPORT -DSDD1_DECOMP \
 	-DHAVE_STDINT_H -DHAVE_STRINGS_H -DIOAPI_NO_64 \
 	-DVERSION=\"1.63\"
