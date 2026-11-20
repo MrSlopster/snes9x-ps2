@@ -33,6 +33,7 @@ extern "C" {
 #include "ps2_video.h"
 #include "ps2_controls.h"
 #include "ps2_config.h"
+#include "ps2_net.h"
 #include "ps2_dirs.h"
 #include "fscompat.h"
 #include "snapshot.h"
@@ -362,6 +363,7 @@ enum
 	SET_FRAMESKIP,
 	SET_FPS,
 	SET_SOUND,
+	SET_NETLOG,
 	SET_DEFAULTS,
 	SET_BACK,
 	SET_COUNT
@@ -432,6 +434,7 @@ void ps2_menu_settings(void)
 		rows[SET_FRAMESKIP] = { "Frame skip", "< " + frameskip_name(ps2_cfg.frameskip) + " >", col_text };
 		rows[SET_FPS] = { "Overlay", std::string("< ") + overlay_names[ps2_cfg.overlay] + " >", col_text };
 		rows[SET_SOUND] = { "Sound", ps2_cfg.sound ? "< On >" : "< Off >", col_text };
+		rows[SET_NETLOG] = { "Network log", !ps2_cfg.netlog ? "< Off >" : ps2_net_ready() ? "< On >" : "< On (not connected) >", col_text };
 		rows[SET_DEFAULTS] = { "Reset to defaults", "", col_dir };
 		rows[SET_BACK] = { "Back", "", col_dir };
 
@@ -488,6 +491,12 @@ void ps2_menu_settings(void)
 				break;
 			case SET_SOUND:
 				ps2_cfg.sound = !ps2_cfg.sound;
+				break;
+			case SET_NETLOG:
+				ps2_cfg.netlog = !ps2_cfg.netlog;
+				if (ps2_cfg.netlog && !ps2_net_start())
+					status = "Network log: no connection", status_err = true;
+				wait_release();
 				break;
 			case SET_DEFAULTS:
 				if (activate)

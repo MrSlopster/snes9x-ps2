@@ -63,10 +63,16 @@ void SMP::reset() {
   timer0.stage1_ticks = timer1.stage1_ticks = timer2.stage1_ticks = 0;
   timer0.stage2_ticks = timer1.stage2_ticks = timer2.stage2_ticks = 0;
   timer0.stage3_ticks = timer1.stage3_ticks = timer2.stage3_ticks = 0;
+#ifdef _EE
+  timer_pending = 0;
+#endif
 }
 
 SMP::SMP() {
   apuram = new uint8[64 * 1024];
+#ifdef _EE
+  timer_pending = 0;
+#endif
 }
 
 SMP::~SMP() {

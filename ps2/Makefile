@@ -21,19 +21,19 @@ EE_LDFLAGS += -L$(PS2SDK)/ports/lib
 EE_LDFLAGS += -Wl,--wrap=_Z17S9xAPUEndScanlinev -Wl,--wrap=_Z14S9xAPUReadPorti \
 	-Wl,--wrap=_Z15S9xAPUWritePortih -Wl,--wrap=_Z15S9xUpdateScreenv \
 	-Wl,--wrap=_Z19S9xEndScreenRefreshv
-EE_LIBS += -lpatches -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
+EE_LIBS += -lps2ip -lnetman -lpatches -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 	-lfileXio -lmc -lz -lkernel -lcdvd -lcglue -lm -lc
 
 VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
 
 # IOP drivers embedded in the ELF (loaded by ps2_iop.cpp).
 IRX_MODULES = iomanX fileXio sio2man mcman mcserv padman mtapman libsd audsrv \
-	usbd bdm bdmfs_fatfs usbmass_bd
+	usbd bdm bdmfs_fatfs usbmass_bd ps2dev9 netman smap
 IRX_OBJS = $(IRX_MODULES:%=irx_%.o)
 
 EE_OBJS = \
 	$(IRX_OBJS) ps2_iop.o \
-	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_net.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \
@@ -53,6 +53,10 @@ all: $(EE_BIN)
 # when build flags or the pixel format change, so RGB565 and BGR555
 # objects can never be linked together.
 $(EE_OBJS): Makefile ../pixform.h ../port.h
+
+# Port sources include each other's headers; rebuild them when any changes.
+PORT_OBJS = $(filter ps2_%.o s9x_sound_driver_audsrv.o,$(EE_OBJS))
+$(PORT_OBJS): $(wildcard ps2_*.h) s9x_sound_driver_audsrv.h
 
 clean:
 	rm -f $(EE_OBJS) $(EE_BIN) $(IRX_OBJS:.o=.c)

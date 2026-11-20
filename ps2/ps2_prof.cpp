@@ -11,6 +11,8 @@
 
 #include "ps2_prof.h"
 #include "ps2_menu.h"
+#include "ps2_net.h"
+#include <stdarg.h>
 
 extern "C" {
 #include <kernel.h>
@@ -20,6 +22,18 @@ extern "C" {
 extern "C" char _ftext[], _etext[];
 
 int ps2_prof_enabled = 0;
+
+/* Profiler output: console (PCSX2 log / ps2link) and the UDP network log. */
+static void out(const char *fmt, ...)
+{
+	char line[256];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof(line), fmt, ap);
+	va_end(ap);
+	printf("%s\n", line);
+	ps2_net_log(line);
+}
 
 #define EE_HZ 294912000u
 #define AVG_FRAMES 30
@@ -148,7 +162,7 @@ static void sampler_dump(void)
 {
 	if (!hist)
 		return;
-	printf("PSAMP total %u other %u text %08x-%08x\n", samples_total, samples_other, text0, text1);
+	out("PSAMP total %u other %u text %08x-%08x", samples_total, samples_other, text0, text1);
 	for (int k = 0; k < DUMP_TOP; k++)
 	{
 		unsigned best = 0, bi = 0;
@@ -157,7 +171,7 @@ static void sampler_dump(void)
 				best = hist[i], bi = i;
 		if (!best)
 			break;
-		printf("PSAMP %08x %u\n", text0 + (bi << SAMPLE_SHIFT), best);
+		out("PSAMP %08x %u", text0 + (bi << SAMPLE_SHIFT), best);
 		hist[bi] = 0; /* consumed */
 	}
 	memset(hist, 0, hist_n * sizeof(unsigned));
@@ -211,7 +225,7 @@ void ps2_prof_frame(void)
 		 ms(acc[PROF_WAIT]), ms(total), fps);
 	snprintf(lines[3], sizeof(lines[3]), "APU port calls %u/frame",
 		 port_calls / window_frames);
-	printf("PROF %s | %s | %s | %s\n", lines[0], lines[1], lines[2], lines[3]);
+	out("PROF %s | %s | %s | %s", lines[0], lines[1], lines[2], lines[3]);
 
 	memset(acc, 0, sizeof(acc));
 	port_calls = 0;
@@ -222,6 +236,14 @@ void ps2_prof_frame(void)
 /* Output fingerprint for A/B correctness checks of optimizations: CRC of
  * the core's rendered frame (before any overlay) every 60th rendered
  * frame. PCSX2 runs are deterministic, so equal CRCs = identical output. */
+static uLong audio_crc = 0;
+
+void ps2_prof_audio(const void *samples, int bytes)
+{
+	if (ps2_prof_enabled)
+		audio_crc = crc32(audio_crc, (const Bytef *)samples, bytes);
+}
+
 void ps2_prof_fingerprint(int width, int height)
 {
 	static unsigned frame_no = 0;
@@ -230,7 +252,7 @@ void ps2_prof_fingerprint(int width, int height)
 	uLong crc = crc32(0L, Z_NULL, 0);
 	for (int y = 0; y < height; y++)
 		crc = crc32(crc, (const Bytef *)(GFX.Screen + y * GFX.RealPPL), width * 2);
-	printf("PFRAME %u %08lx\n", frame_no, crc);
+	out("PFRAME %u %08lx audio %08lx", frame_no, crc, audio_crc);
 }
 
 void ps2_prof_overlay(unsigned short *screen, int pitch, int width, int height)

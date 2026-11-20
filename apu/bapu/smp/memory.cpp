@@ -7,6 +7,9 @@ void SMP::port_write(unsigned addr, unsigned data) {
 }
 
 unsigned SMP::mmio_read(unsigned addr) {
+#ifdef _EE
+  if(addr >= 0xfd) timers_sync();
+#endif
   switch(addr) {
 
   case 0xf2:
@@ -51,6 +54,9 @@ unsigned SMP::mmio_read(unsigned addr) {
 }
 
 void SMP::mmio_write(unsigned addr, unsigned data) {
+#ifdef _EE
+  if(addr == 0xf1 || (addr >= 0xfa && addr <= 0xfc)) timers_sync();
+#endif
   switch(addr) {
 
   case 0xf1:

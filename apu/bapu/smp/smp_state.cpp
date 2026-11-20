@@ -71,6 +71,9 @@ void SMP::save_spc (uint8 *block) {
 
 
 void SMP::save_state(uint8 **block) {
+#ifdef _EE
+  timers_sync();
+#endif
   uint8 *ptr = *block;
   memcpy(ptr, apuram, 64 * 1024);
   ptr += 64 * 1024;
@@ -133,6 +136,9 @@ void SMP::save_state(uint8 **block) {
 }
 
 void SMP::load_state(uint8 **block) {
+#ifdef _EE
+  timer_pending = 0;
+#endif
   uint8 *ptr = *block;
   memcpy(apuram, ptr, 64 * 1024);
   ptr += 64 * 1024;

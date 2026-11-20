@@ -22,6 +22,7 @@
 #include "ps2_config.h"
 #include "ps2_rom.h"
 #include "ps2_prof.h"
+#include "ps2_net.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
@@ -88,6 +89,7 @@ static void ps2_samples_available(void *)
 	{
 		PROF_SCOPE(PROF_MIX);
 		S9xMixSamples(sound_buffer, samples);
+		ps2_prof_audio(sound_buffer, samples * 2);
 	}
 	PROF_SCOPE(PROF_IOP);
 	audsrv_driver.write_samples((int16_t *)sound_buffer, samples);
@@ -383,6 +385,9 @@ int main(int argc, char **argv)
 	if (ps2_cfg.filter != PS2_FILTER_SMOOTH)
 		ps2_video_set_filter(ps2_cfg.filter);
 	ps2_config_apply_core();
+
+	if (ps2_cfg.netlog)
+		ps2_net_start();
 
 	CPU.Flags = 0;
 	S9xDeleteCheats();

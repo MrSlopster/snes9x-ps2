@@ -81,11 +81,23 @@ public:
 
     inline void tick();
     inline void tick(unsigned clocks);
+#ifdef _EE
+    inline void advance(unsigned clocks);
+#endif
   };
 
   Timer<128> timer0;
   Timer<128> timer1;
   Timer< 16> timer2;
+
+#ifdef _EE
+  /* PS2 port: timers are advanced lazily. tick() only counts cycles in
+   * timer_pending; timers_sync() applies them in closed form before any
+   * access that can observe or change timer state ($f1, $fa-$ff,
+   * save state). Bit-identical to ticking every cycle. */
+  unsigned timer_pending;
+  void timers_sync();
+#endif
 
   inline void tick();
   inline void tick(unsigned clocks);

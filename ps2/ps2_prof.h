@@ -27,6 +27,9 @@ void ps2_prof_frame(void);
 /* Log a CRC of the rendered frame every 60 frames (A/B equivalence). */
 void ps2_prof_fingerprint(int width, int height);
 
+/* Fold mixed output samples into the audio fingerprint (A/B checks). */
+void ps2_prof_audio(const void *samples, int bytes);
+
 /* Draw the latest averages into a rendered frame (BGR555, pitch in px). */
 void ps2_prof_overlay(unsigned short *screen, int pitch, int width, int height);
 

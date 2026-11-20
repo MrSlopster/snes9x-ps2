@@ -20,6 +20,8 @@ struct Ps2Config
 	int frameskip;    /* PS2_FRAMESKIP_AUTO or 0..4 frames skipped */
 	int overlay;      /* PS2_OVERLAY_* */
 	bool sound;
+	bool netlog;            /* UDP log over the network adapter */
+	std::string netlog_host; /* "a.b.c.d[:port]", empty = subnet broadcast */
 	std::string last_dir; /* browser start folder */
 };
 

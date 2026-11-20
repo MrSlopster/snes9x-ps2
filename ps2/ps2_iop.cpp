@@ -46,6 +46,9 @@ DECLARE_IRX(usbd)
 DECLARE_IRX(bdm)
 DECLARE_IRX(bdmfs_fatfs)
 DECLARE_IRX(usbmass_bd)
+DECLARE_IRX(ps2dev9)
+DECLARE_IRX(netman)
+DECLARE_IRX(smap)
 
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx)
 
@@ -142,4 +145,14 @@ bool ps2_iop_mtap_ok(void)
 bool ps2_iop_audio_ok(void)
 {
 	return audio_ok;
+}
+
+/* Network adapter drivers for the UDP log: loaded on demand (only when
+ * the log is enabled), once. ps2dev9 fails without an adapter. */
+bool ps2_iop_load_network(void)
+{
+	static int state = 0; /* 0 untried, 1 ok, -1 failed */
+	if (state == 0)
+		state = (LOAD_IRX(ps2dev9) && LOAD_IRX(netman) && LOAD_IRX(smap)) ? 1 : -1;
+	return state > 0;
 }
