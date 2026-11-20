@@ -17,6 +17,7 @@
 
 #include "ps2_dirs.h"
 #include "ps2_controls.h"
+#include "ps2_iop.h"
 
 static S9xAudsrvSoundDriver audsrv_driver;
 static bool ps2_sound_ok = false;
@@ -211,6 +212,13 @@ void S9xExit(void)
 /* apu.cpp calls this via S9xInitSound: open + configure the audsrv device. */
 bool8 S9xOpenSoundDevice(void)
 {
+	/* audsrv_init() spins forever if the AUDSRV module is not running. */
+	if (!ps2_iop_audio_ok())
+	{
+		printf("audsrv module not loaded - falling back to wall-clock pacing.\n");
+		return FALSE;
+	}
+
 	audsrv_driver.init();
 
 	if (!audsrv_driver.open_device(Settings.SoundPlaybackRate, 96))
@@ -325,16 +333,19 @@ static void ps2_apply_settings(void)
 
 int main(int argc, char **argv)
 {
-	printf("\nSnes9x " VERSION " for PS2\n");
-
-	ps2_dirs_init();
-	ps2_apply_settings();
+	printf("\nSnes9x " VERSION " for PS2 (argv[0]=%s)\n", argc > 0 ? argv[0] : "?");
 
 	/* GS comes up first: every later failure path can then show a
 	 * color-coded screen instead of an invisible black screen on a TV
 	 * without a ps2link console (colors: yellow=alloc, magenta=no ROM,
 	 * red=ROM load failed, blue=graphics init failed). */
 	ps2_video_init();
+
+	/* IOP drivers before anything touches files, pads or audio. */
+	ps2_iop_init(argc > 0 ? argv[0] : NULL);
+
+	ps2_dirs_init(argc > 0 ? argv[0] : NULL);
+	ps2_apply_settings();
 
 	CPU.Flags = 0;
 	S9xDeleteCheats();

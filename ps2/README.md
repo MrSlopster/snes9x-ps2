@@ -63,8 +63,15 @@ candidate for later hardware testing only.
 <base>/snes9x/bios/
 ```
 
-`<base>` is chosen at boot: first `mass:` (USB), then `mc0:` (memory card
-slot 1), then `host:` (ps2link). All three mounts are probed at startup.
+`<base>` is chosen at boot: first the device the ELF was launched from,
+then `mass:` (USB), `mc0:` (memory card slot 1), `host:` (ps2link). A USB
+stick gets up to ~2 s to mount before the probe.
+
+The IOP drivers (iomanX, fileXio, sio2man, mcman/mcserv, padman, mtapman,
+libsd, audsrv, usbd, bdm, bdmfs_fatfs, usbmass_bd) are embedded in the ELF
+and loaded at boot after an IOP reset. A launch from `host:` skips the
+reset so ps2link keeps working. If a module fails to load, the feature that
+needs it is skipped (no audio / no pads) rather than hanging boot.
 
 2. Copy `snes9x.elf` anywhere you can boot it from:
    - **ps2link:** `ps2client execee host:snes9x.elf` (dev/test)

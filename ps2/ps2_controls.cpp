@@ -17,6 +17,7 @@ extern "C" {
 #include <stdio.h>
 
 #include "ps2_controls.h"
+#include "ps2_iop.h"
 #include "ps2_input_map.h"
 #include "snes9x.h"
 #include "controls.h"
@@ -74,14 +75,28 @@ static void report_port(int port, unsigned short btns)
                         (pressed & mask_table[i].bits) != 0);
 }
 
+static bool pads_ready = false;
+
 void ps2_input_init(void)
 {
-    padInit(0);
-    mtapInit();
+    /* padInit/mtapInit spin forever if their IOP modules are missing. */
+    if (!ps2_iop_pad_ok())
+    {
+        printf("pad: padman not loaded - no controller input\n");
+        return;
+    }
 
-    /* Multitap open is best-effort; both slots failing keeps 2-pad mode. */
-    mtapPortOpen(0);
-    mtapPortOpen(1);
+    padInit(0);
+
+    if (ps2_iop_mtap_ok())
+    {
+        mtapInit();
+        /* Multitap open is best-effort; both slots failing keeps 2-pad mode. */
+        mtapPortOpen(0);
+        mtapPortOpen(1);
+    }
+
+    pads_ready = true;
 
     for (int port = 0; port < 2; port++)
     {
@@ -104,6 +119,9 @@ void ps2_input_init(void)
 
 void ps2_input_poll(void)
 {
+    if (!pads_ready)
+        return;
+
     for (int port = 0; port < 2; port++)
     {
         if (padGetState(port, 0) != PAD_STATE_STABLE)

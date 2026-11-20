@@ -17,12 +17,18 @@ EE_CXXFLAGS += $(SNES9X_FLAGS) -mtune=r5900 -mhard-float \
 	-fno-rtti -fno-exceptions
 EE_INCS += -I.. -I../apu -I../unzip -I../jma -I$(PS2SDK)/ports/include
 EE_LDFLAGS += -L$(PS2SDK)/ports/lib
-EE_LIBS += -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
+EE_LIBS += -lpatches -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 	-lfileXio -lmc -lz -lkernel -lcdvd -lcglue -lm -lc
 
 VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
 
+# IOP drivers embedded in the ELF (loaded by ps2_iop.cpp).
+IRX_MODULES = iomanX fileXio sio2man mcman mcserv padman mtapman libsd audsrv \
+	usbd bdm bdmfs_fatfs usbmass_bd
+IRX_OBJS = $(IRX_MODULES:%=irx_%.o)
+
 EE_OBJS = \
+	$(IRX_OBJS) ps2_iop.o \
 	ps2_main.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
@@ -45,7 +51,10 @@ all: $(EE_BIN)
 $(EE_OBJS): Makefile ../pixform.h
 
 clean:
-	rm -f $(EE_OBJS) $(EE_BIN)
+	rm -f $(EE_OBJS) $(EE_BIN) $(IRX_OBJS:.o=.c)
+
+irx_%.c: $(PS2SDK)/iop/irx/%.irx
+	$(PS2SDK)/bin/bin2c $< $@ $*_irx
 
 # apu/bapu objects share basenames with nothing else, but their sources are
 # nested; build them with explicit rules.

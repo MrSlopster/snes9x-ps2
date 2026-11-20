@@ -39,15 +39,36 @@ static const char *subdir_names[] = {
 	"",		/* SAT_DIR */
 };
 
-void ps2_dirs_init(void)
+/* The device the ELF was launched from (argv[0] "mass:/...", "mc0:/...",
+ * "host:...") is the most likely home of the user's ROMs: try it first. */
+static const char *boot_candidate(const char *argv0)
 {
-	const char *candidates[] = { "mass:/snes9x", "mc0:/snes9x", "host:/snes9x" };
+	if (!argv0)
+		return NULL;
+	if (strncmp(argv0, "mass", 4) == 0)
+		return "mass:/snes9x";
+	if (strncmp(argv0, "mc0:", 4) == 0)
+		return "mc0:/snes9x";
+	if (strncmp(argv0, "mc1:", 4) == 0)
+		return "mc1:/snes9x";
+	if (strncmp(argv0, "host", 4) == 0)
+		return "host:/snes9x";
+	return NULL;
+}
+
+void ps2_dirs_init(const char *argv0)
+{
+	const char *candidates[] = { boot_candidate(argv0), "mass:/snes9x", "mc0:/snes9x", "host:/snes9x" };
+	const int n_candidates = sizeof(candidates) / sizeof(candidates[0]);
 	int i, j;
 
 	base_dir[0] = 0;
 
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < n_candidates; i++)
 	{
+		if (!candidates[i])
+			continue;
+
 		char probe[64];
 		snprintf(probe, sizeof(probe), "%s", candidates[i]);
 		char *slash = strrchr(probe, '/');
