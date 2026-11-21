@@ -349,7 +349,11 @@ bool ps2_net_start(void)
 	if (id < 0 || StartThread(id, NULL) < 0)
 		return false;
 
-	/* Wait on the CPU's cycle counter (294.912 MHz; no timers involved). */
+	/* Wait on the CPU's cycle counter (294.912 MHz; no timers involved).
+	 * This loop never blocks, so it must not outrank anything: the TCP/IP
+	 * stack's own thread has a lower priority than a main thread and
+	 * would never get to run. Wait at the lowest priority. */
+	ChangeThreadPriority(GetThreadId(), 127);
 	unsigned last = cycle_count(), ms = 0, acc = 0;
 	while (!bring_up_done && ms < NET_START_TIMEOUT_S * 1000)
 	{
@@ -362,6 +366,7 @@ bool ps2_net_start(void)
 			ms++;
 		}
 	}
+	ChangeThreadPriority(GetThreadId(), prio);
 	if (!bring_up_done)
 	{
 		printf("netlog: start-up did not finish in %d s; continuing without it\n", NET_START_TIMEOUT_S);
