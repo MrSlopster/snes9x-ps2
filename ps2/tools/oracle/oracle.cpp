@@ -51,6 +51,20 @@ static void wav_header(FILE *f, unsigned frames)
 }
 
 #ifdef _EE
+/* The GS renderer's hooks in gfx.cpp: not here. */
+uint8 S9xGSTileValid2[4096], S9xGSTileValid4[2048], S9xGSTileValid8[1024];
+bool8 S9xGSBandBegin(void) { return FALSE; }
+void S9xGSBandEnd(void) {}
+void S9xGSBandSoftware(void) {}
+bool8 S9xGSCompareMode(void) { return FALSE; }
+void S9xGSBandPause(bool8) {}
+void S9xGSScreen(bool8) {}
+void S9xGSSelectRenderers(void) {}
+void S9xGSOBJBegin(void) {}
+void S9xGSOBJEnd(void) {}
+#endif
+
+#ifdef _EE
 /* --smp-selftest N: the port's SPC700 loop (SMP::ee_enter) against the
  * reference op_step(), from N random machine states: random registers,
  * code and data, timers and I/O included, run for a random number of

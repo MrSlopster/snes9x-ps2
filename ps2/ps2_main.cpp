@@ -15,6 +15,7 @@
 #include "ps2_video.h"
 #include "s9x_sound_driver_audsrv.h"
 #include "ps2_spu.h"
+#include "ps2_gs.h"
 
 #include "ps2_dirs.h"
 #include "ps2_controls.h"
@@ -111,6 +112,16 @@ static void ps2_sound_resume(void)
 	ps2_net_log(line);
 }
 
+/* Bring the renderer in line with the settings (re-lays out GS memory
+ * when it changes). */
+static void ps2_renderer_apply(void)
+{
+	ps2_gs_compare = ps2_cfg.gs_compare ? 1 : 0;
+	bool gs = ps2_cfg.renderer == PS2_RENDERER_GS;
+	if (gs != ps2_gs_enabled())
+		ps2_gs_enable(gs);
+}
+
 /* Silence for menus and between games. */
 static void ps2_sound_pause(void)
 {
@@ -125,12 +136,22 @@ extern "C" {
 
 bool8 S9xInitUpdate(void)
 {
+	ps2_gs_frame_begin(ps2_cfg.overlay != PS2_OVERLAY_OFF || GFX.InfoStringTimeout > 0);
 	return TRUE;
 }
 
 bool8 S9xDeinitUpdate(int width, int height)
 {
 	PROF_SCOPE(PROF_VIDEO);
+	/* A frame the GS drew is in GS memory, not in GFX.Screen. */
+	if (ps2_gs_frame_picture(width, height))
+	{
+		ps2_prof_overlay(GFX.Screen, GFX.RealPPL, width, height);
+		ps2_gs_frame_end(width, height);
+		ps2_gs_log_stats();
+		ps2_video_present_target(width, height);
+		return TRUE;
+	}
 	ps2_prof_fingerprint(width, height);
 	ps2_prof_overlay(GFX.Screen, GFX.RealPPL, width, height);
 	ps2_video_frame(GFX.Screen, GFX.RealPPL, width, height);
@@ -520,6 +541,8 @@ int main(int argc, char **argv)
 
 	Settings.StopEmulation = FALSE;
 
+	ps2_renderer_apply();
+	ps2_gs_reset();
 	ps2_sound_resume();
 
 	printf("Starting emulation\n");
@@ -532,6 +555,7 @@ int main(int argc, char **argv)
 		{
 			ps2_sound_pause();
 			int action = ps2_menu_pause();
+			ps2_renderer_apply();
 			ps2_sound_resume();
 			if (action == PS2_PAUSE_LOAD_ROM)
 			{

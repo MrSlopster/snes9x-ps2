@@ -384,6 +384,9 @@ static inline void REGISTER_2118 (uint8 Byte)
 	else
 		Memory.VRAM[address = (PPU.VMA.Address << 1) & 0xffff] = Byte;
 
+#ifdef _EE
+	S9xGSVRAMWrite(address);
+#endif
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -415,6 +418,9 @@ static inline void REGISTER_2118_tile (uint8 Byte)
 
 	Memory.VRAM[address] = Byte;
 
+#ifdef _EE
+	S9xGSVRAMWrite(address);
+#endif
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -439,6 +445,9 @@ static inline void REGISTER_2118_linear (uint8 Byte)
 
 	Memory.VRAM[address = (PPU.VMA.Address << 1) & 0xffff] = Byte;
 
+#ifdef _EE
+	S9xGSVRAMWrite(address);
+#endif
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -491,6 +500,9 @@ static inline void REGISTER_2119 (uint8 Byte)
 	else
 		Memory.VRAM[address = ((PPU.VMA.Address << 1) + 1) & 0xffff] = Byte;
 
+#ifdef _EE
+	S9xGSVRAMWrite(address);
+#endif
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -522,6 +534,9 @@ static inline void REGISTER_2119_tile (uint8 Byte)
 
 	Memory.VRAM[address] = Byte;
 
+#ifdef _EE
+	S9xGSVRAMWrite(address);
+#endif
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -546,6 +561,9 @@ static inline void REGISTER_2119_linear (uint8 Byte)
 
 	Memory.VRAM[address = ((PPU.VMA.Address << 1) + 1) & 0xffff] = Byte;
 
+#ifdef _EE
+	S9xGSVRAMWrite(address);
+#endif
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;

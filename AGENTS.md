@@ -11,7 +11,11 @@ commit is `1bcc369`.
   plain upstream for the host oracle.
 - Speed-ups must be exact unless they sit behind a user setting. "Exact"
   means the host oracle's checksums match pristine upstream (below).
-  Approximate paths so far: `Sound: Fast (SPU2 voices)`.
+  Approximate paths so far: `Sound: Fast (SPU2 voices)`, and
+  `Renderer: GS` - which is checked against the software renderer instead:
+  `gs_compare=1` in `ps2.cfg` renders every GS band both ways, reads the GS
+  picture back and logs differing pixels (`GSCMP` lines). It should report
+  none; bands the GS path does not handle fall back to software.
 - Do not commit agent tooling or its output (plans, specs, session state);
   see `.gitignore`. Anything other agents need goes in this file.
 - The R5900 has a 16 KB instruction cache, an 8 KB data cache, traps on
@@ -65,6 +69,7 @@ and embedded in the ELF.
 | --- | --- |
 | Main loop, settings, pacing | `ps2/ps2_main.cpp`, `ps2_config.*`, `ps2_menu.*` |
 | Video (GS, double buffer) | `ps2/ps2_video.*` |
+| GS renderer (tiles as GS sprites) | `ps2/ps2_gs.*`, hooks in `gfx.cpp` / `gfx.h` / `ppu.h` (`S9xGS*`) |
 | IOP modules | `ps2/ps2_iop.*`, `ps2/snesspu/` |
 | Accurate sound output | `ps2/s9x_sound_driver_audsrv.*` |
 | Fast sound (SPU2 voices) | `ps2/ps2_spu.*`, `ps2_spu_core.*`, `ps2_brr_adpcm.*`, `apu/bapu/dsp/SPC_DSP.*` (`fast_*`) |
@@ -85,6 +90,10 @@ and embedded in the ELF.
   fine in PCSX2). Write the field directly.
 - SIF RPC replies are transferred in 16-byte units: pad receive buffers.
 - PCSX2's log drops `printf` lines longer than about 250 characters.
+- GIF REGLIST packets ignore the tag's PRIM field: set the PRIM register
+  with an A+D packet first.
+- A 4-bit texture's palette is the 8x2 image at its CLUT base pointer; the
+  CSA field picks the slot in the GS's internal table, not the source.
 - A zeroed `Settings` struct is not the core's default configuration
   (`MaxSpriteTilesPerLine`, `InterpolationMethod`,
   `SuperFXClockMultiplier` must be set).

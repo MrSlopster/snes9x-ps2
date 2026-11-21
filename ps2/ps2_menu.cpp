@@ -363,6 +363,7 @@ static const char *video_mode_names[PS2_VIDEO_MODE_COUNT] = {
 static const char *filter_names[PS2_FILTER_COUNT] = { "Smooth", "Sharp" };
 static const char *overlay_names[PS2_OVERLAY_COUNT] = { "Off", "FPS", "Profiler", "Profiler+PMC" };
 static const char *sound_names[PS2_SOUND_COUNT] = { "Off", "Accurate", "Fast (SPU2 voices)" };
+static const char *renderer_names[PS2_RENDERER_COUNT] = { "Software", "GS (experimental)" };
 
 enum
 {
@@ -371,6 +372,7 @@ enum
 	SET_FRAMESKIP,
 	SET_FPS,
 	SET_SOUND,
+	SET_RENDERER,
 	SET_NETLOG,
 	SET_DEFAULTS,
 	SET_BACK,
@@ -442,6 +444,7 @@ void ps2_menu_settings(void)
 		rows[SET_FRAMESKIP] = { "Frame skip", "< " + frameskip_name(ps2_cfg.frameskip) + " >", col_text };
 		rows[SET_FPS] = { "Overlay", std::string("< ") + overlay_names[ps2_cfg.overlay] + " >", col_text };
 		rows[SET_SOUND] = { "Sound", std::string("< ") + sound_names[ps2_cfg.sound] + " >", col_text };
+		rows[SET_RENDERER] = { "Renderer", std::string("< ") + renderer_names[ps2_cfg.renderer] + " >", col_text };
 		rows[SET_NETLOG] = { "Network log", !ps2_cfg.netlog ? "< Off >" : ps2_net_ready() ? "< On >" : "< On (not connected) >", col_text };
 		rows[SET_DEFAULTS] = { "Reset to defaults", "", col_dir };
 		rows[SET_BACK] = { "Back", "", col_dir };
@@ -501,6 +504,9 @@ void ps2_menu_settings(void)
 				ps2_cfg.sound = wrap(ps2_cfg.sound + dir, 0, PS2_SOUND_COUNT - 1);
 				if (ps2_cfg.sound == PS2_SOUND_FAST && !ps2_spu_available())
 					ps2_cfg.sound = dir > 0 ? PS2_SOUND_OFF : PS2_SOUND_ACCURATE;
+				break;
+			case SET_RENDERER:
+				ps2_cfg.renderer = wrap(ps2_cfg.renderer + dir, 0, PS2_RENDERER_COUNT - 1);
 				break;
 			case SET_NETLOG:
 				ps2_cfg.netlog = !ps2_cfg.netlog;

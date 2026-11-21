@@ -348,6 +348,10 @@ static inline void RenderScreen (bool8 sub)
 		D = (Memory.FillRAM[0x2130] & 2) << 4; // 'do math' depth flag
 	}
 
+#ifdef _EE
+	S9xGSScreen(sub);
+#endif
+
 	if (BGActive & 0x10)
 	{
 		BG.TileAddress = PPU.OBJNameBase;
@@ -356,11 +360,21 @@ static inline void RenderScreen (bool8 sub)
 		BG.StartPalette = 128;
 		S9xSelectTileConverter(4, FALSE, sub, FALSE);
 		S9xSelectTileRenderers(PPU.BGMode, sub, TRUE);
+#ifdef _EE
+		S9xGSSelectRenderers();
+		S9xGSOBJBegin();
+#endif
 		DrawOBJS(D + 4);
+#ifdef _EE
+		S9xGSOBJEnd();
+#endif
 	}
 
 	BG.NameSelect = 0;
 	S9xSelectTileRenderers(PPU.BGMode, sub, FALSE);
+#ifdef _EE
+	S9xGSSelectRenderers();
+#endif
 
 	#define DO_BG(n, pal, depth, hires, offset, Zh, Zl, voffoff) \
 		if (BGActive & (1 << n)) \
@@ -505,6 +519,17 @@ void S9xUpdateScreen (void)
 		if ((Memory.FillRAM[0x2130] & 0x30) != 0x30 && (Memory.FillRAM[0x2131] & 0x3f))
 			GFX.FixedColour = BUILD_PIXEL(IPPU.XB[PPU.FixedColourRed], IPPU.XB[PPU.FixedColourGreen], IPPU.XB[PPU.FixedColourBlue]);
 
+#ifdef _EE
+		/* GS renderer: a band it can draw goes to the GS (in compare
+		 * mode after the software renderer has drawn it too); any other
+		 * band is drawn here as usual and uploaded at the end of the
+		 * frame. */
+		bool8 gs_band = S9xGSBandBegin();
+		for (int pass = (gs_band && S9xGSCompareMode()) ? 0 : 1; pass < 2; pass++)
+		{
+			if (gs_band)
+				S9xGSBandPause(pass == 0);
+#endif
 		if (PPU.BGMode == 5 || PPU.BGMode == 6 || IPPU.PseudoHires ||
 			((Memory.FillRAM[0x2130] & 0x30) != 0x30 && (Memory.FillRAM[0x2130] & 2) && (Memory.FillRAM[0x2131] & 0x3f) && (Memory.FillRAM[0x212d] & 0x1f)))
 			// If hires (Mode 5/6 or pseudo-hires) or math is to be done
@@ -512,6 +537,13 @@ void S9xUpdateScreen (void)
 			RenderScreen(TRUE);
 
 		RenderScreen(FALSE);
+#ifdef _EE
+		}
+		if (gs_band)
+			S9xGSBandEnd();
+		else
+			S9xGSBandSoftware();
+#endif
 	}
 	else
 	{
@@ -524,6 +556,9 @@ void S9xUpdateScreen (void)
 		for (uint32 l = GFX.StartY; l <= GFX.EndY; l++, GFX.S += GFX.PPL)
 			for (int x = 0; x < IPPU.RenderedScreenWidth; x++)
 				GFX.S[x] = black;
+#ifdef _EE
+		S9xGSBandSoftware();
+#endif
 	}
 
 	IPPU.PreviousLine = IPPU.CurrentLine;

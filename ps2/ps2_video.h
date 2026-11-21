@@ -35,6 +35,31 @@ void ps2_video_set_filter(int filter);
  * src is DMA'd in place; returns once the DMA has finished reading it. */
 void ps2_video_frame(const unsigned short *src, int src_pitch, int width, int height);
 
+/* GS renderer support (ps2_gs.cpp). With the GS layout on, the SNES frame
+ * texture doubles as a render target and VRAM also holds a Z buffer, a
+ * sub-screen buffer, tile atlases and palettes; the display buffers drop
+ * to 16 bits to make room. Addresses are in GS words, as libgraph gives
+ * them. */
+struct Ps2GsVram
+{
+	int ok;
+	int generation; /* changes whenever GS memory is laid out again */
+	int target; /* 512 wide PSMCT16: the SNES frame */
+	int z;      /* 512 x 256 PSMZ16 */
+	int sub;    /* 512 x 256 PSMCT16: sub screen */
+	/* Tile atlases: 8x8 tiles on an 8-pixel grid with an 8-pixel margin
+	 * (flipped tiles are drawn with decreasing texture coordinates, which
+	 * must not go below zero). */
+	int atlas2;  /* 1024 x 512 PSMT4: 2bpp tiles */
+	int atlas4;  /* 512 x 512 PSMT4: 4bpp tiles */
+	int atlas8;  /* 512 x 256 PSMT8: 8bpp tiles */
+	int clut[4]; /* palettes, 16 GS blocks each (see ps2_gs.cpp) */
+};
+void ps2_video_set_gs_layout(int on); /* re-lays out VRAM, clears the screen */
+const Ps2GsVram *ps2_video_gs_vram(void); /* NULL unless the layout is on */
+/* Show the top-left width x height of the target as the next frame. */
+void ps2_video_present_target(int width, int height);
+
 /* Draw a solid test colour: lets a TV (no ps2link) tell init/boot failure
  * states apart once the GS is initialized early at boot. */
 void ps2_video_test(int r, int g, int b);

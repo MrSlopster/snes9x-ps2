@@ -30,7 +30,7 @@ EE_LDFLAGS += -Wl,--defsym,Registers=0x70000000 -Wl,--defsym,ICPU=0x70000020 \
 EE_LDFLAGS += -Wl,--wrap=_Z17S9xAPUEndScanlinev -Wl,--wrap=_Z14S9xAPUReadPorti \
 	-Wl,--wrap=_Z15S9xAPUWritePortih -Wl,--wrap=_Z15S9xUpdateScreenv \
 	-Wl,--wrap=_Z19S9xEndScreenRefreshv
-EE_LIBS += -lps2ip -lnetman -lpatches -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
+EE_LIBS += -ldebug -lps2ip -lnetman -lpatches -lstdc++ -lgraph -ldraw -ldma -lpacket -lgs -laudsrv -lpad -lmtap \
 	-lfileXio -lmc -lz -lkernel -lcdvd -lcglue -lm -lc
 
 VPATH = .. ../apu ../apu/bapu/dsp ../apu/bapu/smp ../unzip ../filter ../jma
@@ -43,7 +43,7 @@ IRX_OBJS = $(IRX_MODULES:%=irx_%.o) irx_snesspu.o
 
 EE_OBJS = \
 	$(IRX_OBJS) ps2_iop.o \
-	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_net.o ps2_idle.o ps2_spu.o ps2_spu_core.o ps2_brr_adpcm.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
+	ps2_main.o ps2_menu.o ps2_config.o ps2_rom.o ps2_prof.o ps2_net.o ps2_idle.o ps2_gs.o ps2_spu.o ps2_spu_core.o ps2_brr_adpcm.o ps2_video.o ps2_controls.o ps2_input_map.o ps2_dirs.o s9x_sound_driver_audsrv.o \
 	apu.o bapu-dsp-sdsp.o bapu-smp-smp.o bapu-smp-smp_state.o \
 	bsx.o c4.o c4emu.o cheats.o cheats2.o clip.o conffile.o \
 	controls.o cpu.o cpuexec.o cpuops.o crosshairs.o dma.o \

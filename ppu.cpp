@@ -1753,6 +1753,11 @@ void S9xResetPPUFast (void)
 	PPU.RecomputeClipWindows = TRUE;
 	IPPU.ColorsChanged = TRUE;
 	IPPU.OBJChanged = TRUE;
+#ifdef _EE
+	memset(S9xGSTileValid2, 0, sizeof(S9xGSTileValid2));
+	memset(S9xGSTileValid4, 0, sizeof(S9xGSTileValid4));
+	memset(S9xGSTileValid8, 0, sizeof(S9xGSTileValid8));
+#endif
 	memset(IPPU.TileCached[TILE_2BIT], 0, MAX_2BIT_TILES);
 	memset(IPPU.TileCached[TILE_4BIT], 0, MAX_4BIT_TILES);
 	memset(IPPU.TileCached[TILE_8BIT], 0, MAX_8BIT_TILES);
@@ -1899,6 +1904,11 @@ void S9xSoftResetPPU (void)
 		memset(&IPPU.Clip[c], 0, sizeof(struct ClipData));
 	IPPU.ColorsChanged = TRUE;
 	IPPU.OBJChanged = TRUE;
+#ifdef _EE
+	memset(S9xGSTileValid2, 0, sizeof(S9xGSTileValid2));
+	memset(S9xGSTileValid4, 0, sizeof(S9xGSTileValid4));
+	memset(S9xGSTileValid8, 0, sizeof(S9xGSTileValid8));
+#endif
 	memset(IPPU.TileCached[TILE_2BIT], 0, MAX_2BIT_TILES);
 	memset(IPPU.TileCached[TILE_4BIT], 0, MAX_4BIT_TILES);
 	memset(IPPU.TileCached[TILE_8BIT], 0, MAX_8BIT_TILES);

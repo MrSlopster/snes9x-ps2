@@ -200,6 +200,28 @@ struct COLOR_SUB
 	}
 };
 
+#ifdef _EE
+/* PS2 port, GS renderer (ps2/ps2_gs.cpp): per band of scanlines the tile
+ * and backdrop renderers can be replaced by ones that hand the work to
+ * the Graphics Synthesizer. */
+bool8 S9xGSBandBegin (void);    /* TRUE: the GS draws this band */
+void S9xGSBandEnd (void);
+void S9xGSBandSoftware (void);  /* the band was drawn in software */
+bool8 S9xGSCompareMode (void);  /* draw GS bands in software as well */
+void S9xGSBandPause (bool8);
+void S9xGSScreen (bool8 sub);   /* a screen of the band starts */
+void S9xGSSelectRenderers (void);
+void S9xGSOBJBegin (void);
+void S9xGSOBJEnd (void);
+extern uint8 S9xGSTileValid2[4096], S9xGSTileValid4[2048], S9xGSTileValid8[1024];
+static inline void S9xGSVRAMWrite (uint32 address)
+{
+	S9xGSTileValid2[address >> 4] = 0;
+	S9xGSTileValid4[address >> 5] = 0;
+	S9xGSTileValid8[address >> 6] = 0;
+}
+#endif
+
 void S9xStartScreenRefresh (void);
 void S9xEndScreenRefresh (void);
 void S9xBuildDirectColourMaps (void);

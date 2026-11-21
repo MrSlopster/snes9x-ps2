@@ -34,6 +34,8 @@ void ps2_config_defaults(void)
 	/* Falls back to the accurate path where the IOP module is missing. */
 	ps2_cfg.sound = PS2_SOUND_FAST;
 	ps2_cfg.netlog = false;
+	ps2_cfg.renderer = PS2_RENDERER_GS;
+	ps2_cfg.gs_compare = false;
 	ps2_cfg.idle_skip = true;
 	ps2_cfg.dump_frames = false;
 	ps2_cfg.netlog_host.clear();
@@ -69,6 +71,10 @@ void ps2_config_load(void)
 			ps2_cfg.overlay = clamp(n, 0, PS2_OVERLAY_COUNT - 1);
 		else if (!strcmp(key, "sound"))
 			ps2_cfg.sound = (n >= 0 && n < PS2_SOUND_COUNT) ? n : PS2_SOUND_ACCURATE;
+		else if (!strcmp(key, "renderer"))
+			ps2_cfg.renderer = (n >= 0 && n < PS2_RENDERER_COUNT) ? n : PS2_RENDERER_SOFTWARE;
+		else if (!strcmp(key, "gs_compare"))
+			ps2_cfg.gs_compare = n != 0;
 		else if (!strcmp(key, "dump_frames"))
 			ps2_cfg.dump_frames = n != 0;
 		else if (!strcmp(key, "idle_skip"))
@@ -99,6 +105,7 @@ bool ps2_config_save(void)
 	fprintf(f, "frameskip=%d\n", ps2_cfg.frameskip);
 	fprintf(f, "show_fps=%d\n", ps2_cfg.overlay);
 	fprintf(f, "sound=%d\n", ps2_cfg.sound);
+	fprintf(f, "renderer=%d\n", ps2_cfg.renderer);
 	fprintf(f, "idle_skip=%d\n", ps2_cfg.idle_skip ? 1 : 0);
 	fprintf(f, "netlog=%d\n", ps2_cfg.netlog ? 1 : 0);
 	fprintf(f, "netlog_host=%s\n", ps2_cfg.netlog_host.c_str());

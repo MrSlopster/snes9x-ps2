@@ -22,6 +22,13 @@ enum
 	PS2_SOUND_COUNT
 };
 
+enum
+{
+	PS2_RENDERER_SOFTWARE = 0,
+	PS2_RENDERER_GS, /* drawn by the Graphics Synthesizer (ps2_gs.h) */
+	PS2_RENDERER_COUNT
+};
+
 struct Ps2Config
 {
 	int video_mode;   /* PS2_VIDEO_* */
@@ -29,6 +36,8 @@ struct Ps2Config
 	int frameskip;    /* PS2_FRAMESKIP_AUTO or 0..4 frames skipped */
 	int overlay;      /* PS2_OVERLAY_* */
 	int sound;        /* PS2_SOUND_* */
+	int renderer;     /* PS2_RENDERER_* */
+	bool gs_compare;  /* debug: check the GS renderer against software every frame */
 	bool netlog;            /* UDP log over the network adapter */
 	bool idle_skip;         /* exact 65816 idle-loop skipping (ps2_idle.cpp) */
 	bool dump_frames;       /* debug: raw frame dumps with the profiler */

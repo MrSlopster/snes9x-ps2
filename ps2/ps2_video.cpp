@@ -30,6 +30,7 @@
 #include <gs_privileged.h>
 #include <gs_psm.h>
 #include <graph.h>
+#include <stdio.h>
 #include <packet.h>
 #include <draw.h>
 #include <draw2d.h>
@@ -70,6 +71,12 @@ static int cur_filter = PS2_FILTER_SMOOTH;
 /* Chain budget: 7 header qwords + one REF per row + tail (TEXFLUSH/FRAME
  * 3, sprite 4, finish 2, END tag 1). */
 #define FRAME_PACKET_QW (8 + TEX_MAX_H + 16)
+
+/* GS renderer layout (ps2_gs.cpp): the SNES frame is drawn by the GS into
+ * the texture the software path uploads to, and the rest of VRAM holds
+ * what that needs. To make room the display buffers are 16-bit. */
+static int gs_layout = 0;
+static Ps2GsVram gs_vram;
 
 static framebuffer_t fb[2];
 static zbuffer_t zb;
@@ -220,6 +227,8 @@ static void fill_buffer(int target, int r, int g, int b)
 	draw_wait_finish();
 }
 
+static qword_t *present_commands(qword_t *q, int target, int width, int height);
+
 static int resolve_mode(int mode)
 {
 	if (mode <= PS2_VIDEO_AUTO || mode >= PS2_VIDEO_MODE_COUNT)
@@ -246,8 +255,8 @@ static void apply_mode(int mode)
 		fb[i].width = FB_WIDTH;
 		fb[i].height = FB_HEIGHT;
 		fb[i].mask = 0;
-		fb[i].psm = GS_PSM_32;
-		fb[i].address = graph_vram_allocate(FB_WIDTH, FB_HEIGHT, GS_PSM_32, GRAPH_ALIGN_PAGE);
+		fb[i].psm = gs_layout ? GS_PSM_16 : GS_PSM_32;
+		fb[i].address = graph_vram_allocate(FB_WIDTH, FB_HEIGHT, fb[i].psm, GRAPH_ALIGN_PAGE);
 
 		/* With the flicker filter both read circuits are blended and
 		 * circuit 2 reads one line lower. Without it, graph_enable_output
@@ -256,10 +265,36 @@ static void apply_mode(int mode)
 		dispfb2[i] = GS_SET_DISPFB(fb[i].address >> 11, fb[i].width >> 6, fb[i].psm, 0, m.flicker ? 1 : 0);
 	}
 
-	/* Texture in VRAM: PSMCT16 (BGR555 from the core), block-aligned. */
+	/* Texture in VRAM: PSMCT16 (BGR555 from the core). Page-aligned so
+	 * the GS renderer can use it as a frame buffer. */
 	texbuf.width = TEX_MAX_W;
 	texbuf.psm = GS_PSM_16;
-	texbuf.address = graph_vram_allocate(TEX_MAX_W, TEX_MAX_H, GS_PSM_16, GRAPH_ALIGN_BLOCK);
+	texbuf.address = graph_vram_allocate(TEX_MAX_W, TEX_MAX_H, GS_PSM_16, GRAPH_ALIGN_PAGE);
+
+	static int generation = 0;
+	memset(&gs_vram, 0, sizeof(gs_vram));
+	gs_vram.generation = ++generation;
+	if (gs_layout)
+	{
+		gs_vram.target = texbuf.address;
+		gs_vram.z = graph_vram_allocate(512, 256, GS_PSMZ_16, GRAPH_ALIGN_PAGE);
+		gs_vram.sub = graph_vram_allocate(512, 256, GS_PSM_16, GRAPH_ALIGN_PAGE);
+		gs_vram.atlas2 = graph_vram_allocate(1024, 512, GS_PSM_4, GRAPH_ALIGN_BLOCK);
+		gs_vram.atlas4 = graph_vram_allocate(512, 512, GS_PSM_4, GRAPH_ALIGN_BLOCK);
+		gs_vram.atlas8 = graph_vram_allocate(512, 256, GS_PSM_8, GRAPH_ALIGN_BLOCK);
+		bool cluts = true;
+		for (int i = 0; i < 4; i++)
+		{
+			/* 64 x 32 PSMCT16 = 16 GS blocks */
+			gs_vram.clut[i] = graph_vram_allocate(64, 32, GS_PSM_16, GRAPH_ALIGN_PAGE);
+			cluts = cluts && gs_vram.clut[i] > 0;
+		}
+		gs_vram.ok = gs_vram.z > 0 && gs_vram.sub > 0 && gs_vram.atlas2 > 0 && gs_vram.atlas4 > 0 &&
+			     gs_vram.atlas8 > 0 && cluts;
+		printf("GS VRAM: fb %x %x target %x z %x sub %x atlas %x %x %x clut %x.. %s\n", fb[0].address,
+		       fb[1].address, gs_vram.target, gs_vram.z, gs_vram.sub, gs_vram.atlas2, gs_vram.atlas4,
+		       gs_vram.atlas8, gs_vram.clut[0], gs_vram.ok ? "ok" : "FAILED");
+	}
 
 	graph_set_mode(m.interlace, m.crt, m.ffmd, m.flicker);
 	graph_set_screen(0, 0, FB_WIDTH, FB_HEIGHT);
@@ -428,13 +463,94 @@ void ps2_video_frame(const unsigned short *src, int src_pitch, int width, int he
 	qword_t *end_tag = q;
 	q++;
 
-	PACK_GIFTAG(q, GIF_SET_TAG(2, 1, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD);
+	q = present_commands(q, target, width, height);
+
+	DMATAG_END(end_tag, q - end_tag - 1, 0, 0, 0);
+
+	/* Write back the core's freshly rendered pixels (and this packet) to
+	 * RAM. FlushCache(0) costs a fixed 8 KB D-cache walk, much cheaper
+	 * than a per-line SyncDCache over up to 480 KB of frame. */
+	FlushCache(0);
+	dma_channel_send_chain(DMA_CHANNEL_GIF, frame_packet->data, q - frame_packet->data, 0, 0);
+
+	/* The DMA reads GFX.Screen in place: the core must not render the next
+	 * frame until it is done (dma_wait_fast, armed in init). FINISH is the
+	 * last thing in the chain, so draw_wait_finish also proves every REF
+	 * read is done, and that the back buffer is complete before it is
+	 * queued for display. Keep both. */
+	dma_wait_fast();
+	draw_wait_finish();
+
+	present(target);
+}
+
+const Ps2GsVram *ps2_video_gs_vram(void)
+{
+	return (video_ready && gs_layout && gs_vram.ok) ? &gs_vram : NULL;
+}
+
+void ps2_video_set_gs_layout(int on)
+{
+	on = on ? 1 : 0;
+	if (on == gs_layout)
+		return;
+	gs_layout = on;
+	if (video_ready)
+		apply_mode(cur_mode);
+}
+
+void ps2_video_present_target(int width, int height)
+{
+	if (!video_ready)
+		return;
+	int target = acquire_back_buffer();
+	qword_t *q = present_commands(frame_packet->data, target, width, height);
+
+	FlushCache(0);
+	dma_channel_send_normal(DMA_CHANNEL_GIF, frame_packet->data, q - frame_packet->data, 0, 0);
+	dma_wait_fast();
+	draw_wait_finish();
+
+	present(target);
+}
+
+/* Stretch the top-left width x height of the SNES texture over a display
+ * buffer. Sets every register it relies on: the GS renderer leaves its
+ * own drawing state behind. */
+static qword_t *present_commands(qword_t *q, int target, int width, int height)
+{
+	PACK_GIFTAG(q, GIF_SET_TAG(gs_layout ? 12 : 2, 1, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD);
 	q++;
 	PACK_GIFTAG(q, 1, GS_REG_TEXFLUSH);
 	q++;
 	PACK_GIFTAG(q, GS_SET_FRAME(fb[target].address >> 11, fb[target].width >> 6,
 				    fb[target].psm, fb[target].mask), GS_REG_FRAME);
 	q++;
+	if (gs_layout)
+	{
+		PACK_GIFTAG(q, GS_SET_ZBUF(gs_vram.z >> 11, GS_PSMZ_16 & 0xf, 1), GS_REG_ZBUF); /* no Z writes */
+		q++;
+		PACK_GIFTAG(q, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, 1), GS_REG_TEST); /* Z test: always */
+		q++;
+		PACK_GIFTAG(q, GS_SET_SCISSOR(0, FB_WIDTH - 1, 0, FB_HEIGHT - 1), GS_REG_SCISSOR);
+		q++;
+		PACK_GIFTAG(q, GS_SET_TEX0(texbuf.address >> 6, texbuf.width >> 6, GS_PSM_16, draw_log2(TEX_MAX_W),
+					   draw_log2(TEX_MAX_H), 0, 1, 0, 0, 0, 0, 0), GS_REG_TEX0);
+		q++;
+		PACK_GIFTAG(q, GS_SET_TEX1(1, 0, cur_filter == PS2_FILTER_SHARP ? 0 : 1,
+					   cur_filter == PS2_FILTER_SHARP ? 0 : 1, 0, 0, 0), GS_REG_TEX1);
+		q++;
+		PACK_GIFTAG(q, GS_SET_CLAMP(1, 1, 0, 0, 0, 0), GS_REG_CLAMP);
+		q++;
+		PACK_GIFTAG(q, GS_SET_FBA(0), GS_REG_FBA);
+		q++;
+		PACK_GIFTAG(q, GS_SET_PABE(0), GS_REG_PABE);
+		q++;
+		PACK_GIFTAG(q, GS_SET_DTHE(0), GS_REG_DTHE);
+		q++;
+		PACK_GIFTAG(q, GS_SET_COLCLAMP(1), GS_REG_COLCLAMP);
+		q++;
+	}
 
 	texrect_t rect;
 	rect.v0.x = 0.0f;
@@ -457,24 +573,7 @@ void ps2_video_frame(const unsigned short *src, int src_pitch, int width, int he
 
 	q = draw_rect_textured(q, 0, &rect);
 	q = draw_finish(q);
-
-	DMATAG_END(end_tag, q - end_tag - 1, 0, 0, 0);
-
-	/* Write back the core's freshly rendered pixels (and this packet) to
-	 * RAM. FlushCache(0) costs a fixed 8 KB D-cache walk, much cheaper
-	 * than a per-line SyncDCache over up to 480 KB of frame. */
-	FlushCache(0);
-	dma_channel_send_chain(DMA_CHANNEL_GIF, frame_packet->data, q - frame_packet->data, 0, 0);
-
-	/* The DMA reads GFX.Screen in place: the core must not render the next
-	 * frame until it is done (dma_wait_fast, armed in init). FINISH is the
-	 * last thing in the chain, so draw_wait_finish also proves every REF
-	 * read is done, and that the back buffer is complete before it is
-	 * queued for display. Keep both. */
-	dma_wait_fast();
-	draw_wait_finish();
-
-	present(target);
+	return q;
 }
 
 void ps2_video_test(int r, int g, int b)
