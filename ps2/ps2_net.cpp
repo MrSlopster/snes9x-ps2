@@ -171,13 +171,9 @@ static void set_ip4(struct ip4_addr *a, unsigned host_order)
 	a->addr = PP_HTONL(host_order);
 }
 
-bool ps2_net_start(void)
+/* Runs on its own thread (see ps2_net_start). */
+static bool net_bring_up(void)
 {
-	if (ready)
-		return true;
-	if (tried)
-		return false; /* drivers/stack are one-shot */
-	tried = true;
 
 	status("Loading network drivers...", NULL);
 	if (!ps2_iop_load_network())
@@ -301,4 +297,78 @@ void ps2_net_log(const char *line)
 	if (!ready)
 		return;
 	sendto(sock, line, strlen(line), 0, (struct sockaddr *)&dest, sizeof(dest));
+}
+
+/* Bringing the network up has, now and then, never returned on real
+ * hardware (inside the SDK's TCP/IP start-up; cause unknown). It is a
+ * debugging aid and must not take the emulator with it: it runs on its
+ * own thread, and if that has not finished after a while the caller
+ * carries on without the log. (If it does finish later, the log simply
+ * starts working then.) */
+#define NET_START_TIMEOUT_S 20
+
+static volatile int bring_up_done = 0;
+static unsigned char net_stack[32 * 1024] __attribute__((aligned(16)));
+
+static void net_thread(void *)
+{
+	net_bring_up();
+	bring_up_done = 1;
+	ExitDeleteThread();
+}
+
+static inline unsigned cycle_count(void)
+{
+	unsigned c;
+	__asm__ volatile("mfc0 %0, $9" : "=r"(c));
+	return c;
+}
+
+bool ps2_net_start(void)
+{
+	if (ready)
+		return true;
+	if (tried)
+		return false; /* drivers/stack are one-shot */
+	tried = true;
+
+	/* Above the caller's priority: it runs whenever it is not blocked,
+	 * and the wait below gets the CPU only while it is. */
+	ee_thread_status_t me;
+	int prio = 64;
+	if (ReferThreadStatus(GetThreadId(), &me) >= 0)
+		prio = me.current_priority;
+	ee_thread_t t;
+	memset(&t, 0, sizeof(t));
+	t.func = (void *)net_thread;
+	t.stack = net_stack;
+	t.stack_size = sizeof(net_stack);
+	t.gp_reg = &_gp;
+	t.initial_priority = prio > 1 ? prio - 1 : 1;
+	int id = CreateThread(&t);
+	if (id < 0 || StartThread(id, NULL) < 0)
+		return false;
+
+	/* Wait on the CPU's cycle counter (294.912 MHz; no timers involved). */
+	unsigned last = cycle_count(), ms = 0, acc = 0;
+	while (!bring_up_done && ms < NET_START_TIMEOUT_S * 1000)
+	{
+		unsigned now = cycle_count();
+		acc += now - last;
+		last = now;
+		while (acc >= 294912)
+		{
+			acc -= 294912;
+			ms++;
+		}
+	}
+	if (!bring_up_done)
+	{
+		printf("netlog: start-up did not finish in %d s; continuing without it\n", NET_START_TIMEOUT_S);
+		ps2_menu_status("Network log", "Network did not start", "(continuing without the log)");
+		for (unsigned t0 = cycle_count(); cycle_count() - t0 < 294912000u * 2;)
+			;
+		return false;
+	}
+	return ready;
 }
