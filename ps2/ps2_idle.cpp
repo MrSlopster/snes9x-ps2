@@ -12,10 +12,14 @@
  *    and no SA-1 / SuperFX (they share RAM with the CPU).
  *  - Two consecutive passes with identical registers, flags and OpenBus,
  *    inside the same event window, give the exact iteration cost c.
- *  - Whole iterations are then skipped: Cycles += k * c, stopping at least
- *    one iteration before the next H-event, the IRQ timer and NMI. Until
- *    then nothing can change what the loop reads, and every iteration
- *    leaves the same state, so the result is identical to executing them.
+ *  - Whole iterations are then skipped: Cycles += k * c, every one of them
+ *    ending before the next H-event and the IRQ timer (NMI is raised by an
+ *    H-event). Until then nothing can change what the loop reads, and
+ *    every iteration leaves the same state, so the result is identical to
+ *    executing them.
+ *  - A loop proven this way is remembered with the registers, code and
+ *    memory bytes the proof rests on; arriving at its branch again with
+ *    all of those unchanged (after each H-event, typically) skips at once.
  */
 
 #include "snes9x.h"
@@ -216,6 +220,111 @@ static bool same_state(const LoopState &a, const LoopState &b)
 	       a.overflow == b.overflow && a.open_bus == b.open_bus;
 }
 
+/* The last plain idle loop that was proven (two identical passes in one
+ * event window), with what the proof rests on: the registers at the
+ * branch, the code, and the memory bytes the body reads. H-events end a
+ * skip ten times per scanline, and proving the loop again each time costs
+ * two real passes; with this, one pass that arrives at the branch in the
+ * same state, with the same code and the same bytes behind its operands,
+ * is enough: the next pass can only repeat the proven one. */
+struct KnownLoop
+{
+	bool valid;
+	LoopState s;       /* (the event fields are not compared) */
+	int32 c;           /* master cycles per pass */
+	int32 fast_rom_speed;
+	uint8 code_len;
+	const uint8 *code_ptr;
+	uint8 code[16];
+	uint8 nbytes;
+	const uint8 *byte_ptr[12];
+	uint8 byte_val[12];
+};
+static KnownLoop known;
+
+static const uint8 *direct_ptr(uint32 address)
+{
+	uint8 *p = Memory.Map[(address & 0xffffff) >> MEMMAP_SHIFT];
+	return p >= (uint8 *)CMemory::MAP_LAST ? p + (address & 0xffff) : NULL;
+}
+
+/* Record a proven LOOP_PURE body. Anything unusual simply leaves no
+ * record (the loop is then proven again each time, as before). */
+static void remember_loop(uint16 target, uint16 after_branch, const LoopState &state, int32 c)
+{
+	known.valid = false;
+	if (CheckEmulation())
+		return; /* direct page wraps differently */
+
+	uint32 pb = ICPU.ShiftedPB;
+	unsigned len = (uint16)(after_branch - target);
+	if (len < 2 || len > sizeof(known.code) || (target & MEMMAP_MASK) + len > MEMMAP_BLOCK_SIZE)
+		return;
+	const uint8 *code = direct_ptr(pb | target);
+	if (!code)
+		return;
+
+	unsigned n = 0;
+	for (unsigned pos = 0; pos < len - 2;)
+	{
+		uint8 op = code[pos];
+		uint32 a0, a1;
+		switch (body_mode(op))
+		{
+		case DP:
+			a0 = (Registers.D.W + code[pos + 1]) & 0xffff;
+			a1 = (a0 + 1) & 0xffff;
+			break;
+		case ABS:
+			a0 = ICPU.ShiftedDB | code[pos + 1] | (code[pos + 2] << 8);
+			a1 = ICPU.ShiftedDB | ((a0 + 1) & 0xffff);
+			break;
+		case LONG:
+			a0 = code[pos + 1] | (code[pos + 2] << 8) | (code[pos + 3] << 16);
+			a1 = (a0 + 1) & 0xffffff;
+			break;
+		case IMM:
+		case IMPL:
+			pos += ICPU.S9xOpLengths[op];
+			continue;
+		default:
+			return;
+		}
+		const uint8 *p0 = direct_ptr(a0), *p1 = direct_ptr(a1);
+		if (!p0 || !p1 || n + 2 > sizeof(known.byte_val))
+			return;
+		known.byte_ptr[n] = p0;
+		known.byte_val[n++] = *p0;
+		known.byte_ptr[n] = p1;
+		known.byte_val[n++] = *p1;
+		pos += ICPU.S9xOpLengths[op];
+	}
+
+	known.s = state;
+	known.c = c;
+	known.fast_rom_speed = CPU.FastROMSpeed;
+	known.code_len = (uint8)len;
+	known.code_ptr = code;
+	memcpy(known.code, code, len);
+	known.nbytes = (uint8)n;
+	known.valid = true;
+}
+
+/* At the branch of the remembered loop, in the proven state? */
+static inline bool at_known_loop(void)
+{
+	const LoopState &k = known.s;
+	if (!known.valid || Registers.PBPC != k.pbpc || Registers.A.W != k.a || Registers.X.W != k.x ||
+	    Registers.Y.W != k.y || Registers.P.W != k.p || Registers.S.W != k.s || Registers.D.W != k.d ||
+	    Registers.DB != k.db || ICPU._Carry != k.carry || ICPU._Zero != k.zero || ICPU._Negative != k.negative ||
+	    ICPU._Overflow != k.overflow || OpenBus != k.open_bus || CPU.FastROMSpeed != known.fast_rom_speed)
+		return false;
+	for (unsigned i = 0; i < known.nbytes; i++)
+		if (*known.byte_ptr[i] != known.byte_val[i])
+			return false;
+	return memcmp(known.code_ptr, known.code, known.code_len) == 0;
+}
+
 void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 {
 	if (!ps2_idle_enabled || Settings.SA1 || Settings.SuperFX)
@@ -225,6 +334,23 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 	if (CPU.NMIPending || CPU.IRQLine || CPU.IRQExternal || CPU.WaitingForInterrupt ||
 	    Timings.IRQFlagChanging || (CPU.Flags & SCAN_KEYS_FLAG))
 	{
+		last.valid = false;
+		return;
+	}
+
+	if (at_known_loop())
+	{
+		int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
+		/* Every skipped pass must end before the limit (events fire at
+		 * "cycles >= event"). */
+		int32 k = (limit - CPU.Cycles - 1) / known.c;
+		if (k > 0)
+		{
+			ps2_idle_plain_skips++;
+			CPU.Cycles += k * known.c;
+			ps2_idle_skipped_cycles += (uint32)(k * known.c);
+		}
+		/* (not a pass the proof below may measure from) */
 		last.valid = false;
 		return;
 	}
@@ -244,7 +370,9 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 			if (c > 0 && c <= 512)
 			{
 				int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
-				int32 k = (limit - CPU.Cycles) / c - 1;
+				/* Whole passes that end before the limit (events fire at
+				 * "cycles >= event"). */
+				int32 k = (limit - CPU.Cycles - 1) / c;
 				/* Handshake loops: only as far as the SPC700 leaves the
 				 * port unchanged (runs it ahead; see apu.cpp). */
 				if (k > 0 && kind == LOOP_HANDSHAKE)
@@ -255,6 +383,8 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 						ps2_idle_handshake_skips++, ps2_idle_handshake_passes += k;
 					else
 						ps2_idle_plain_skips++;
+					if (kind == LOOP_PURE)
+						remember_loop(target, after_branch, now, c);
 					CPU.Cycles += k * c;
 					ps2_idle_skipped_cycles += (uint32)(k * c);
 					now.cycles = CPU.Cycles;

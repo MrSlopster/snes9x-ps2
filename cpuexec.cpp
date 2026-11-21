@@ -42,6 +42,10 @@ void S9xMainLoop (void)
 		S9xMovieUpdate();
 	}
 
+#ifdef _EE
+	const bool8 sa1 = Settings.SA1;
+#endif
+
 	for (;;)
 	{
 #ifdef _EE
@@ -207,7 +211,12 @@ void S9xMainLoop (void)
 			(*Opcodes[Op].S9xOpcode)();
 		}
 
+#ifdef _EE
+		/* (fixed for the cartridge: read once, not after every opcode) */
+		if (sa1)
+#else
 		if (Settings.SA1)
+#endif
 			S9xSA1MainLoop();
 	}
 
