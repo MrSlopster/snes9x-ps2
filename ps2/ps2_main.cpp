@@ -166,6 +166,13 @@ bool8 S9xContinueUpdate(int width, int height)
 	return TRUE;
 }
 
+static inline uint32 ps2_cycle_count(void)
+{
+	uint32 c;
+	__asm__ volatile("mfc0 %0, $9" : "=r"(c));
+	return c;
+}
+
 /* Core calls this once per rendered frame. Ported from unix/unix.cpp
  * S9xSyncSpeed: with a live sound device, the blocking audsrv ring write
  * is the throttle (unix's SoundSync path); otherwise pace by wall clock
@@ -206,22 +213,36 @@ void S9xSyncSpeed(void)
 	if (Settings.SoundSync && ps2_sound_ok && !Settings.Mute)
 		return;
 
-	static struct timespec next1 = { 0, 0 };
-	struct timespec now;
+	/* Wall-clock pacing on the CPU's own cycle counter (COP0 Count,
+	 * 294.912 MHz, wraps every 14.6 s), waiting in a plain loop. This used
+	 * to sleep in 0.2 ms nanosleep() slices; each of those creates a
+	 * semaphore and a timer alarm, and on real hardware the main thread
+	 * was found asleep for good right after a frame (hang watchdog), all
+	 * the sooner the more spare time per frame there was to sleep away. */
+	const uint32 ee_hz = 294912000u;
+	const uint32 frame_cycles = (uint32)((uint64)Settings.FrameTime * ee_hz / 1000000);
+	static uint32 next = 0;
+	static bool started = false;
+	uint32 now = ps2_cycle_count();
 
-	while (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
-		;
-
-	if (next1.tv_sec == 0)
+	if (!started)
 	{
-		next1 = now;
-		next1.tv_nsec += 1000000;
+		next = now + ee_hz / 1000;
+		started = true;
 	}
+
+	/* > 0: ahead of schedule. Anything further ahead than two frames is
+	 * the counter having wrapped during a pause. */
+	int32 lead = (int32)(next - now);
+	if (lead > (int32)(2 * frame_cycles))
+	{
+		next = now;
+		lead = 0;
+	}
+	bool late = lead < 0;
 
 	/* AUTO_FRAMERATE: render everything when there is spare time,
 	 * otherwise render 1-in-10 while catching up (unix logic). */
-	bool late = (next1.tv_sec < now.tv_sec) ||
-		    (next1.tv_sec == now.tv_sec && next1.tv_nsec < now.tv_nsec);
 	unsigned limit = (Settings.SkipFrames == AUTO_FRAMERATE)
 				 ? (late ? 10 : 1)
 				 : (unsigned)Settings.SkipFrames;
@@ -230,41 +251,23 @@ void S9xSyncSpeed(void)
 
 	if (IPPU.RenderThisFrame)
 		IPPU.SkippedFrames = 0;
-	else if (late)
+	else if (late && (uint32)(-lead) >= ee_hz / 2)
 	{
-		uint64 lag_us = (uint64)(now.tv_sec - next1.tv_sec) * 1000000 +
-				(now.tv_nsec - next1.tv_nsec) / 1000;
-		if (lag_us >= 500000)
-		{
-			/* Half a second behind means a pause happened; resync
-			 * instead of fast-forwarding. */
-			next1 = now;
-		}
+		/* Half a second behind means a pause happened; resync instead
+		 * of fast-forwarding. */
+		next = now;
 	}
 
-	/* Sleep until this frame's target time in small slices. */
-	PROF_SCOPE(PROF_WAIT);
-	while (1)
+	/* Wait for this frame's target time. */
 	{
-		while (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		PROF_SCOPE(PROF_WAIT);
+		PS2_STAGE("pacing: waiting");
+		while ((int32)(next - ps2_cycle_count()) > 0)
 			;
-		if (now.tv_sec > next1.tv_sec ||
-		    (now.tv_sec == next1.tv_sec && now.tv_nsec >= next1.tv_nsec))
-			break;
-
-		struct timespec slice = { 0, 200000 }; /* 0.2 ms */
-		PS2_STAGE("pacing: nanosleep");
-		nanosleep(&slice, NULL);
-		PS2_STAGE("pacing: awake");
+		PS2_STAGE("pacing: done");
 	}
 
-	/* Next frame target: Settings.FrameTime is in microseconds. */
-	next1.tv_nsec += (long)Settings.FrameTime * 1000;
-	while (next1.tv_nsec >= 1000000000)
-	{
-		next1.tv_sec++;
-		next1.tv_nsec -= 1000000000;
-	}
+	next += frame_cycles;
 }
 
 void S9xAutoSaveSRAM(void)

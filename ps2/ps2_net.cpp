@@ -210,7 +210,10 @@ bool ps2_net_start(void)
 		set_ip4(&nm, s.nm);
 		set_ip4(&gw, s.gw);
 	}
+	/* (One status per step: a console stuck here shows which.) */
+	status("Starting TCP/IP...", NULL);
 	ps2ipInit(&ip, &nm, &gw);
+	status("TCP/IP started", NULL);
 
 	t_ip_info info;
 	if (s.dhcp && ps2ip_getconfig((char *)"sm0", &info) >= 0)
@@ -240,6 +243,7 @@ bool ps2_net_start(void)
 		}
 	}
 
+	status("Reading the interface...", NULL);
 	if (ps2ip_getconfig((char *)"sm0", &info) < 0)
 	{
 		status("Network setup failed", NULL);
@@ -249,6 +253,7 @@ bool ps2_net_start(void)
 	unsigned my_ip = PP_NTOHL(info.ipaddr.s_addr);
 	unsigned my_nm = PP_NTOHL(info.netmask.s_addr);
 
+	status("Opening the log socket...", NULL);
 	sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0)
 	{
