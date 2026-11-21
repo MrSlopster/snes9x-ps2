@@ -253,7 +253,9 @@ void S9xSyncSpeed(void)
 			break;
 
 		struct timespec slice = { 0, 200000 }; /* 0.2 ms */
+		PS2_STAGE("pacing: nanosleep");
 		nanosleep(&slice, NULL);
+		PS2_STAGE("pacing: awake");
 	}
 
 	/* Next frame target: Settings.FrameTime is in microseconds. */
@@ -269,7 +271,14 @@ void S9xAutoSaveSRAM(void)
 {
 	/* Called from RenderLine once per Settings.AutoSaveDelay frames when
 	 * SRAM was modified. */
-	Memory.SaveSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+	std::string path = S9xGetFilename(".srm", SRAM_DIR);
+	std::string line = "SRAM autosave: " + path;
+	printf("%s\n", line.c_str());
+	ps2_net_log(line.c_str());
+	PS2_STAGE("SRAM autosave (file write)");
+	bool8 ok = Memory.SaveSRAM(path.c_str());
+	PS2_STAGE("SRAM autosave done");
+	ps2_net_log(ok ? "SRAM autosave: written" : "SRAM autosave: FAILED");
 }
 
 void S9xMessage(int type, int number, const char *message)
