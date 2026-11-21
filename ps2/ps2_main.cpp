@@ -289,31 +289,21 @@ void S9xAutoSaveSRAM(void)
 	int err = errno;
 	PS2_STAGE("SRAM autosave done");
 	if (ok)
+	{
+		printf("SRAM autosave: written\n");
 		ps2_net_log("SRAM autosave: written");
+	}
 	else
 		ps2_log_storage("SRAM autosave FAILED", err);
 }
 
-/* Why can a file not be written? One log line about the save folder. */
+/* One log line about where settings and saves go. */
 void ps2_log_storage(const char *what, int err)
 {
-	std::string base = ps2_base_dir(), srm = base + "/srm", probe = srm + "/_probe.tmp";
-	struct stat st;
-	int base_ok = stat(base.c_str(), &st) == 0, srm_ok = stat(srm.c_str(), &st) == 0;
-	errno = 0;
-	int mk = mkdir(srm.c_str(), 0777), mk_err = errno;
-	errno = 0;
-	FILE *f = fopen(probe.c_str(), "wb");
-	int open_err = errno, wrote = 0;
-	if (f)
-	{
-		wrote = (int)fwrite("probe", 1, 5, f);
-		fclose(f);
-		remove(probe.c_str());
-	}
 	char line[240];
-	snprintf(line, sizeof(line), "STORAGE %s (errno %d): base %s exists=%d, srm exists=%d, mkdir=%d errno %d, probe file open=%d errno %d wrote=%d",
-		 what, err, base.c_str(), base_ok, srm_ok, mk, mk_err, f ? 1 : 0, open_err, wrote);
+	snprintf(line, sizeof(line), "STORAGE %s (errno %d): ROMs under %s; settings in %s (%s); saves for this ROM in %s",
+		 what, err, ps2_rom_base_dir(), ps2_base_dir(), ps2_base_writable() ? "writable" : "NOT writable",
+		 ps2_save_dir());
 	printf("%s\n", line);
 	ps2_net_log(line);
 }
@@ -530,7 +520,7 @@ int main(int argc, char **argv)
 	std::string rom_path = (argc > 1) ? argv[1] : "";
 	std::string load_error, failed_name;
 	std::string start_dir = ps2_cfg.last_dir.empty()
-					? std::string(ps2_base_dir()) + "/roms"
+					? std::string(ps2_rom_base_dir()) + "/roms"
 					: ps2_cfg.last_dir;
 
 	while (1) /* one iteration per game session */
@@ -552,7 +542,7 @@ int main(int argc, char **argv)
 
 		if (rom_path.empty())
 		{
-			printf("No ROM found. Put ROM files in %s/roms/\n", ps2_base_dir());
+			printf("No ROM found. Put ROM files in %s/roms/\n", ps2_rom_base_dir());
 			ps2_video_test(0xFF, 0x00, 0xFF);
 			while (1)
 				;
@@ -580,7 +570,8 @@ int main(int argc, char **argv)
 	S9xDeleteCheats();
 	S9xCheatsEnable();
 	ps2_menu_status("Loading", Memory.ROMFilename.c_str(), "Loading save data...");
-	Memory.LoadSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+	ps2_dirs_rom_loaded();
+	Memory.LoadSRAM(ps2_sram_load_path().c_str());
 
 	/* Stays on screen until the first emulated frame replaces it: if it
 	 * never goes away, emulation (or the first audio push) is stuck. */
@@ -592,7 +583,7 @@ int main(int argc, char **argv)
 	ps2_gs_reset();
 	ps2_sound_resume();
 	ps2_watchdog_init();
-	ps2_log_storage("check at game start", 0);
+	ps2_log_storage("at game start", 0);
 	ps2_watchdog_arm(true);
 
 	printf("Starting emulation\n");

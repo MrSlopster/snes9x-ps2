@@ -2,8 +2,18 @@
  *
  * Modern ps2sdk's newlib port maps POSIX file calls (fopen/stat/mkdir/
  * opendir) onto iomanX, so this file uses plain POSIX APIs over PS2 device
- * paths. Base dir priority: mass:/snes9x (USB) -> mc0:/snes9x (mem card) ->
- * host:/snes9x (ps2link dev). Each snes9x dir type gets a subdirectory.
+ * paths.
+ *
+ * Two places matter:
+ *  - the ROM base: where ROMs are looked for first - <device>/snes9x on
+ *    the device the ELF came from, else USB, memory card, host;
+ *  - the data base: where ps2.cfg and the per-type subdirectories live.
+ *    It has to be writable, which a device that can be read is not
+ *    necessarily (USB writes have been seen to fail with I/O errors on
+ *    real hardware): the ROM base if a file can be written there, else
+ *    mc0:/snes9x, else mc1:/snes9x.
+ * Battery saves (.srm) go next to the ROM when that folder is writable,
+ * otherwise into <data base>/srm.
  *
  * NOTE: direct fileXio/fio calls fail to compile here on purpose
  * (iox_stat.h errors out when included outside ps2sdk's own libcglue). */
@@ -18,7 +28,23 @@
 #include "snes9x.h"
 #include "memmap.h"
 
-static char base_dir[256];
+static char base_dir[256];     /* data base */
+static char rom_base_dir[256]; /* ROM base */
+static std::string save_dir;   /* .srm folder of the loaded ROM; empty: <data base>/srm */
+static bool base_writable = false;
+
+/* Can a file be created, written and closed in this folder? */
+static bool dir_writable(const char *dir)
+{
+	std::string path = std::string(dir) + "/_s9xw.tmp";
+	FILE *f = fopen(path.c_str(), "wb");
+	if (!f)
+		return false;
+	bool ok = fwrite("w", 1, 1, f) == 1;
+	ok = (fclose(f) == 0) && ok;
+	remove(path.c_str());
+	return ok;
+}
 
 /* Index order must match enum s9x_getdirtype in fscompat.h:
  * DEFAULT, HOME, ROMFILENAME, ROM, SRAM, SNAPSHOT, SCREENSHOT, SPC,
@@ -84,9 +110,26 @@ void ps2_dirs_init(const char *argv0)
 
 	if (!base_dir[0])
 		strcpy(base_dir, "mc0:/snes9x");
+	strcpy(rom_base_dir, base_dir);
 
-	printf("base dir: %s\n", base_dir);
 	mkdir(base_dir, 0777); /* EEXIST is not an error */
+	base_writable = dir_writable(base_dir);
+	if (!base_writable)
+	{
+		static const char *fallback[] = { "mc0:/snes9x", "mc1:/snes9x" };
+		for (i = 0; i < 2 && !base_writable; i++)
+		{
+			if (!strcmp(fallback[i], rom_base_dir))
+				continue;
+			mkdir(fallback[i], 0777);
+			if (dir_writable(fallback[i]))
+			{
+				strcpy(base_dir, fallback[i]);
+				base_writable = true;
+			}
+		}
+	}
+	printf("ROM base: %s, data base: %s (%s)\n", rom_base_dir, base_dir, base_writable ? "writable" : "NOT writable");
 
 	for (j = 0; j <= SAT_DIR; j++)
 	{
@@ -104,6 +147,50 @@ const char *ps2_base_dir(void)
 	return base_dir;
 }
 
+const char *ps2_rom_base_dir(void)
+{
+	return rom_base_dir;
+}
+
+bool ps2_base_writable(void)
+{
+	return base_writable;
+}
+
+static std::string rom_folder(void)
+{
+	size_t slash = Memory.ROMFilename.rfind('/');
+	return slash != std::string::npos ? Memory.ROMFilename.substr(0, slash) : std::string(rom_base_dir);
+}
+
+void ps2_dirs_rom_loaded(void)
+{
+	std::string folder = rom_folder();
+	save_dir = dir_writable(folder.c_str()) ? folder : std::string();
+	printf("saves for this ROM: %s\n", ps2_save_dir());
+}
+
+const char *ps2_save_dir(void)
+{
+	static std::string dir;
+	dir = save_dir.empty() ? std::string(base_dir) + "/srm" : save_dir;
+	return dir.c_str();
+}
+
+std::string ps2_sram_load_path(void)
+{
+	/* Where it would be saved; failing that, a copy next to the ROM (put
+	 * there from a PC, say) on a device that cannot be written. */
+	std::string path = S9xGetFilename(".srm", SRAM_DIR);
+	struct stat st;
+	if (stat(path.c_str(), &st) == 0)
+		return path;
+	std::string beside = S9xGetFilename(".srm", ROMFILENAME_DIR);
+	if (stat(beside.c_str(), &st) == 0)
+		return beside;
+	return path;
+}
+
 static const char *rom_exts[] = { ".sfc", ".smc", ".zip", ".jma", ".bin", ".fig", ".swc", NULL };
 
 static int has_ext(const char *name, const char *ext)
@@ -116,12 +203,12 @@ static int has_ext(const char *name, const char *ext)
 const char *ps2_find_rom(void)
 {
 	static char found[300];
-	std::string roms = std::string(base_dir) + "/roms";
+	std::string roms = std::string(rom_base_dir) + "/roms";
 
 	DIR *d = opendir(roms.c_str());
 	if (!d)
 	{
-		printf("roms dir not found under %s\n", base_dir);
+		printf("roms dir not found under %s\n", rom_base_dir);
 		return NULL;
 	}
 
@@ -157,8 +244,11 @@ std::string S9xGetDirectory(enum s9x_getdirtype t)
 		size_t slash = Memory.ROMFilename.rfind('/');
 		if (slash != std::string::npos)
 			return Memory.ROMFilename.substr(0, slash);
-		return base_dir;
+		return rom_base_dir;
 	}
+
+	if (t == SRAM_DIR)
+		return ps2_save_dir();
 
 	if (subdir_names[t][0])
 		return std::string(base_dir) + "/" + subdir_names[t];
