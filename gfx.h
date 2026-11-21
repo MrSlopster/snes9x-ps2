@@ -214,12 +214,29 @@ void S9xGSSelectRenderers (void);
 void S9xGSOBJBegin (void);
 void S9xGSOBJEnd (void);
 extern uint8 S9xGSTileValid2[4096], S9xGSTileValid4[2048], S9xGSTileValid8[1024];
+/* Mode 7 reads the first 32 KB of VRAM as words: low byte = map cell
+ * (128 x 128), high byte = character data (256 characters of 64 bytes).
+ * Written cells, the map rows they are in, and written characters. */
+extern uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Row[128], S9xGSMode7Char[256];
+extern uint8 S9xGSMode7AnyDirty;
 static inline void S9xGSVRAMWrite (uint32 address)
 {
 	S9xGSTileValid2[address >> 4] = 0;
 	S9xGSTileValid4[address >> 5] = 0;
 	S9xGSTileValid8[address >> 6] = 0;
+	if (address < 0x8000)
+	{
+		if (address & 1)
+			S9xGSMode7Char[address >> 7] = 1;
+		else
+		{
+			S9xGSMode7Cell[address >> 1] = 1;
+			S9xGSMode7Row[address >> 8] = 1;
+		}
+		S9xGSMode7AnyDirty = 1;
+	}
 }
+void S9xGSMode7 (uint32 Left, uint32 Right, int D, bool8 math);
 #endif
 
 void S9xStartScreenRefresh (void);

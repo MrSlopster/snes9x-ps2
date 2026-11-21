@@ -148,6 +148,14 @@ static void clut_update(void)
 	const uint16 *c = IPPU.ScreenColors;
 	bool any = false;
 
+	/* Usually nothing changed since the last band: one compare says so. */
+	static uint16 last[256];
+	static int last_mode = -1;
+	if (clut_valid && last_mode == PPU.BGMode && !memcmp(last, c, sizeof(last)))
+		return;
+	memcpy(last, c, sizeof(last));
+	last_mode = PPU.BGMode;
+
 	for (unsigned p = 0; p < 16; p++)
 		if (!clut_valid || memcmp(shadow4[p], c + p * 16, sizeof(shadow4[p])))
 		{
@@ -166,7 +174,8 @@ static void clut_update(void)
 			any = true;
 		}
 
-	if ((PPU.BGMode == 3 || PPU.BGMode == 4) && (!clut_valid || memcmp(shadow8, c, sizeof(shadow8))))
+	const bool uses8 = PPU.BGMode == 3 || PPU.BGMode == 4 || PPU.BGMode == 7;
+	if (uses8 && (!clut_valid || memcmp(shadow8, c, sizeof(shadow8))))
 	{
 		memcpy(shadow8, c, sizeof(shadow8));
 		uint16 *img = (uint16 *)image(vram->clut[1] >> 6, 1, GS_PSM_16, 0, 0, 16, 16, 512);
@@ -178,7 +187,7 @@ static void clut_update(void)
 		}
 		any = true;
 	}
-	else if (PPU.BGMode != 3 && PPU.BGMode != 4)
+	else if (!uses8)
 		shadow8[0] ^= 0x8000; /* stale: upload when an 8bpp mode comes */
 
 	clut_valid = true;
@@ -250,6 +259,132 @@ static void tile_upload(const Atlas &a, unsigned n, const uint8 *pix)
 	AD(p, 0, GS_REG_TEXFLUSH);
 	a.valid[n] = 1;
 	ps2_gs_stats.uploads++;
+}
+
+/* ---- Mode 7 ---------------------------------------------------------- */
+
+/* The Mode 7 plane is a 128x128 map of 8x8 characters, 256 colours: a
+ * 1024x1024 8-bit texture here, built from VRAM (map cell = low byte of
+ * a word, character data = high bytes) and kept up to date from the dirty
+ * marks the core leaves on VRAM writes. Each scanline is then one
+ * textured strip with the line's matrix worked into its texture
+ * coordinates. */
+extern struct SLineMatrixData LineMatrixData[240];
+
+uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Row[128], S9xGSMode7Char[256];
+uint8 S9xGSMode7AnyDirty = 1;
+static bool m7_valid = false;
+static bool m7_tile0_valid = false;
+
+/* Characters of map row cy, cells cx0..cx0+63, as a 512x8 image. */
+static void m7_upload_half_row(unsigned cy, unsigned cx0)
+{
+	uint8 *d = (uint8 *)image(vram->m7 >> 6, 1024 / 64, GS_PSM_8, (int)cx0 * 8, (int)cy * 8, 512, 8, 512 * 8);
+	const uint8 *map = Memory.VRAM + (cy * 128 + cx0) * 2;
+	for (unsigned c = 0; c < 64; c++)
+	{
+		const uint8 *src = Memory.VRAM + 1 + (map[c * 2] << 7);
+		uint8 *o = d + c * 8;
+		for (unsigned py = 0; py < 8; py++, src += 16, o += 512)
+			for (unsigned px = 0; px < 8; px++)
+				o[px] = src[px * 2];
+	}
+}
+
+static void m7_upload_cell(unsigned cell)
+{
+	uint8 *d = (uint8 *)image(vram->m7 >> 6, 1024 / 64, GS_PSM_8, (int)(cell & 127) * 8, (int)(cell >> 7) * 8, 8, 8, 64);
+	const uint8 *src = Memory.VRAM + 1 + (Memory.VRAM[cell * 2] << 7);
+	for (unsigned py = 0; py < 8; py++, src += 16, d += 8)
+		for (unsigned px = 0; px < 8; px++)
+			d[px] = src[px * 2];
+}
+
+static void m7_update(void)
+{
+	if (m7_valid && !S9xGSMode7AnyDirty)
+		return;
+
+	/* Which cells to send again: the written ones, and - only if any
+	 * character data was written - every cell showing such a character.
+	 * Nothing here walks the whole map unless it has to. */
+	static uint16 list[2048];
+	unsigned count = 0;
+	bool all = !m7_valid;
+
+	if (!all)
+	{
+		bool chars = false;
+		for (unsigned c = 0; c < 256; c++)
+			if (S9xGSMode7Char[c])
+			{
+				chars = true;
+				break;
+			}
+		if (chars)
+		{
+			if (S9xGSMode7Char[0])
+				m7_tile0_valid = false;
+			for (unsigned cell = 0; cell < 0x4000 && !all; cell++)
+				if (S9xGSMode7Char[Memory.VRAM[cell * 2]] || S9xGSMode7Cell[cell])
+				{
+					if (count < sizeof(list) / sizeof(list[0]))
+						list[count++] = (uint16)cell;
+					else
+						all = true;
+				}
+		}
+		else
+		{
+			for (unsigned row = 0; row < 128 && !all; row++)
+				if (S9xGSMode7Row[row])
+					for (unsigned cell = row * 128; cell < row * 128 + 128; cell++)
+						if (S9xGSMode7Cell[cell])
+						{
+							if (count < sizeof(list) / sizeof(list[0]))
+								list[count++] = (uint16)cell;
+							else
+								all = true;
+						}
+		}
+	}
+
+	if (all)
+	{
+		for (unsigned cy = 0; cy < 128; cy++)
+		{
+			m7_upload_half_row(cy, 0);
+			m7_upload_half_row(cy, 64);
+		}
+		m7_tile0_valid = false;
+		ps2_gs_stats.uploads += 256;
+	}
+	else
+	{
+		for (unsigned i = 0; i < count; i++)
+			m7_upload_cell(list[i]);
+		ps2_gs_stats.uploads += count;
+	}
+
+	if (!m7_tile0_valid)
+	{
+		/* Character 0 on its own, for "repeat character 0 outside the
+		 * map": the unused corner of the 8bpp atlas. */
+		uint8 *d = (uint8 *)image(vram->atlas8 >> 6, 512 / 64, GS_PSM_8, 0, 0, 8, 8, 64);
+		const uint8 *src = Memory.VRAM + 1;
+		for (unsigned py = 0; py < 8; py++, src += 16, d += 8)
+			for (unsigned px = 0; px < 8; px++)
+				d[px] = src[px * 2];
+		m7_tile0_valid = true;
+	}
+
+	memset(S9xGSMode7Cell, 0, sizeof(S9xGSMode7Cell));
+	memset(S9xGSMode7Row, 0, sizeof(S9xGSMode7Row));
+	memset(S9xGSMode7Char, 0, sizeof(S9xGSMode7Char));
+	S9xGSMode7AnyDirty = 0;
+	m7_valid = true;
+	u64 *p = ad(1);
+	AD(p, 0, GS_REG_TEXFLUSH);
 }
 
 /* ---- band state ----------------------------------------------------- */
@@ -495,6 +630,198 @@ static void gs_clipped_math(uint32 Tile, uint32 Offset, uint32 StartPixel, uint3
 	draw_tile(Tile, Offset, StartPixel, Width, StartLine, LineCount, true);
 }
 
+/* Mode 7, BG1. One strip per scanline and per piece of it: inside the
+ * map, and (repeat mode 3) outside it, where character 0 repeats. */
+#define M7_LIMIT (1024 << 8) /* map size in the 8.8 fixed point the PPU uses */
+
+static inline u64 st(float s, float t)
+{
+	union { float f; u32 u; } a, b;
+	a.f = s;
+	b.f = t;
+	return (u64)a.u | ((u64)b.u << 32);
+}
+
+/* The part [i0, i1) of [0, n) where c0 + d * i lies in [0, M7_LIMIT). */
+static void m7_inside(int c0, int d, int n, int &i0, int &i1)
+{
+	if (d == 0)
+	{
+		if (c0 < 0 || c0 >= M7_LIMIT)
+			i1 = i0; /* empty */
+		return;
+	}
+	/* first i with c >= 0 (d > 0) or c < LIMIT (d < 0); first i past the other end */
+	long long lo, hi;
+	if (d > 0)
+	{
+		lo = c0 >= 0 ? 0 : (-(long long)c0 + d - 1) / d;
+		hi = c0 >= M7_LIMIT ? 0 : ((long long)M7_LIMIT - c0 + d - 1) / d;
+	}
+	else
+	{
+		lo = c0 < M7_LIMIT ? 0 : ((long long)c0 - M7_LIMIT) / -d + 1;
+		hi = c0 < 0 ? 0 : (long long)c0 / -d + 1;
+	}
+	if (lo > i0)
+		i0 = (int)(lo > n ? n : lo);
+	if (hi < i1)
+		i1 = (int)(hi < 0 ? 0 : hi);
+	if (i1 < i0)
+		i1 = i0;
+}
+
+static void m7_strip(int x0, int x1, int y, unsigned z, float s0, float t0, float s1, float t1)
+{
+	u64 *p = ad(9);
+	AD(p, GS_SET_PRIM(4, 0, 1, 0, 0, 0, 0, 0, 0), GS_REG_PRIM); /* triangle strip, textured, ST */
+	AD(p, st(s0, t0), GS_REG_ST);
+	AD(p, xyz(x0, y, z), GS_REG_XYZ2);
+	AD(p, st(s1, t1), GS_REG_ST);
+	AD(p, xyz(x1, y, z), GS_REG_XYZ2);
+	AD(p, st(s0, t0), GS_REG_ST);
+	AD(p, xyz(x0, y + 1, z), GS_REG_XYZ2);
+	AD(p, st(s1, t1), GS_REG_ST);
+	AD(p, xyz(x1, y + 1, z), GS_REG_XYZ2);
+}
+
+void S9xGSMode7(uint32 Left, uint32 Right, int D, bool8 math)
+{
+	if (!band_active || Right <= Left)
+		return;
+	set_ztest(ZTST_GREATER);
+
+	unsigned c = GFX.ClipColors ? 0 : 0x808080;
+	unsigned alpha = (screen_sub || math) ? 0x80 : 0x40;
+	const int repeat = PPU.Mode7Repeat;
+	const unsigned z = (unsigned)(D + 7);
+	const int n = (int)(Right - Left);
+
+	/* Map texture; coordinates wrap (they are kept inside the map by hand
+	 * in the other repeat modes). Q = 1. */
+	u64 *p = ad(3);
+	AD(p, GS_SET_TEX0(vram->m7 >> 6, 1024 / 64, GS_PSM_8, 10, 10, 1, 0, vram->clut[1] >> 6, GS_PSM_16, 0, 0, 1),
+	   GS_REG_TEX0);
+	AD(p, GS_SET_CLAMP(0, 0, 0, 0, 0, 0), GS_REG_CLAMP);
+	AD(p, (u64)c | ((u64)alpha << 24) | ((u64)0x3f800000 << 32), GS_REG_RGBAQ);
+	bool on_map_texture = true;
+
+	struct SLineMatrixData *l = &LineMatrixData[GFX.StartY];
+	for (uint32 Line = GFX.StartY; Line <= GFX.EndY; Line++, l++)
+	{
+		/* The software renderer's arithmetic (tileimpl.h), up to the
+		 * coordinates of the first pixel and the step per pixel. */
+		int32 HOffset = ((int32)l->M7HOFS << 19) >> 19;
+		int32 VOffset = ((int32)l->M7VOFS << 19) >> 19;
+		int32 CentreX = ((int32)l->CentreX << 19) >> 19;
+		int32 CentreY = ((int32)l->CentreY << 19) >> 19;
+
+		int starty = PPU.Mode7VFlip ? 255 - (int)(Line + 1) : (int)(Line + 1);
+		int yy = VOffset - CentreY;
+		yy = (yy & 0x2000) ? (yy | ~0x3ff) : (yy & 0x3ff);
+
+		int BB = ((l->MatrixB * starty) & ~63) + ((l->MatrixB * yy) & ~63) + (CentreX << 8);
+		int DD = ((l->MatrixD * starty) & ~63) + ((l->MatrixD * yy) & ~63) + (CentreY << 8);
+
+		int startx, aa, cc;
+		if (PPU.Mode7HFlip)
+		{
+			startx = (int)Right - 1;
+			aa = -l->MatrixA;
+			cc = -l->MatrixC;
+		}
+		else
+		{
+			startx = (int)Left;
+			aa = l->MatrixA;
+			cc = l->MatrixC;
+		}
+
+		int xx = HOffset - CentreX;
+		xx = (xx & 0x2000) ? (xx | ~0x3ff) : (xx & 0x3ff);
+		int X0 = l->MatrixA * startx + ((l->MatrixA * xx) & ~63) + BB;
+		int Y0 = l->MatrixC * startx + ((l->MatrixC * xx) & ~63) + DD;
+
+		/* Pixel i of the span reads the texel at floor((X0 + aa * i) / 256).
+		 * Half a 1/256 step is added so interpolation error cannot pull an
+		 * exact value under its texel boundary. */
+		const float scale = 1.0f / (float)M7_LIMIT;
+		#define M7_S(i) (((float)(X0 + aa * (i)) + 0.5f - xbase) * scale)
+		#define M7_T(i) (((float)(Y0 + cc * (i)) + 0.5f - ybase) * scale)
+
+		if (!repeat)
+		{
+			/* Wrapping: bring the span near the origin (texture
+			 * coordinates lose precision far from it). */
+			int xmin = aa < 0 ? X0 + aa * n : X0, ymin = cc < 0 ? Y0 + cc * n : Y0;
+			float xbase = (float)((xmin >> 18) << 18), ybase = (float)((ymin >> 18) << 18);
+			m7_strip((int)Left, (int)Right, (int)Line, z, M7_S(0), M7_T(0), M7_S(n), M7_T(n));
+			continue;
+		}
+
+		const float xbase = 0, ybase = 0;
+		int i0 = 0, i1 = n;
+		m7_inside(X0, aa, n, i0, i1);
+		m7_inside(Y0, cc, n, i0, i1);
+		if (i1 > i0)
+		{
+			if (!on_map_texture)
+			{
+				p = ad(2);
+				AD(p, GS_SET_TEX0(vram->m7 >> 6, 1024 / 64, GS_PSM_8, 10, 10, 1, 0, vram->clut[1] >> 6, GS_PSM_16, 0, 0, 1),
+				   GS_REG_TEX0);
+				AD(p, GS_SET_CLAMP(0, 0, 0, 0, 0, 0), GS_REG_CLAMP);
+				on_map_texture = true;
+			}
+			m7_strip((int)Left + i0, (int)Left + i1, (int)Line, z, M7_S(i0), M7_T(i0), M7_S(i1), M7_T(i1));
+		}
+		if (repeat == 3 && (i0 > 0 || i1 < n))
+		{
+			/* Outside the map: character 0, repeating. An 8x8 corner of
+			 * the 8bpp atlas (512x256) with region repeat; coordinates
+			 * reduced to one character first. */
+			if (on_map_texture)
+			{
+				p = ad(2);
+				AD(p, GS_SET_TEX0(vram->atlas8 >> 6, 512 / 64, GS_PSM_8, 9, 8, 1, 0, vram->clut[1] >> 6, GS_PSM_16, 0, 0, 1),
+				   GS_REG_TEX0);
+				AD(p, GS_SET_CLAMP(3, 3, 7, 0, 7, 0), GS_REG_CLAMP);
+				on_map_texture = false;
+			}
+			for (int part = 0; part < 2; part++)
+			{
+				int a = part ? i1 : 0, b = part ? n : i0;
+				if (i1 == i0)
+					a = 0, b = part ? 0 : n; /* nothing inside: one piece */
+				if (b <= a)
+					continue;
+				int xa = X0 + aa * a, ya = Y0 + cc * a;
+				int xmin = aa < 0 ? xa + aa * (b - a) : xa, ymin = cc < 0 ? ya + cc * (b - a) : ya;
+				int xb = (xmin >> 11) << 11, yb = (ymin >> 11) << 11; /* whole characters */
+				m7_strip((int)Left + a, (int)Left + b, (int)Line, z,
+					 ((float)(xa - xb) + 0.5f) / (512.0f * 256.0f), ((float)(ya - yb) + 0.5f) / (256.0f * 256.0f),
+					 ((float)(xa + aa * (b - a) - xb) + 0.5f) / (512.0f * 256.0f),
+					 ((float)(ya + cc * (b - a) - yb) + 0.5f) / (256.0f * 256.0f));
+			}
+		}
+		#undef M7_S
+		#undef M7_T
+	}
+
+	/* Back to what the tile sprites expect. */
+	p = ad(1);
+	AD(p, GS_SET_CLAMP(1, 1, 0, 0, 0, 0), GS_REG_CLAMP);
+}
+
+static void gs_mode7_nomath(uint32 Left, uint32 Right, int D)
+{
+	S9xGSMode7(Left, Right, D, FALSE);
+}
+static void gs_mode7_math(uint32 Left, uint32 Right, int D)
+{
+	S9xGSMode7(Left, Right, D, TRUE);
+}
+
 /* Backdrop: depth 1, colour 0, wherever no layer drew. */
 static void backdrop(uint32 Left, uint32 Right, bool math)
 {
@@ -523,6 +850,8 @@ void S9xGSSelectRenderers(void)
 	GFX.DrawClippedTileMath = gs_clipped_math;
 	GFX.DrawBackdropNomath = gs_backdrop_nomath;
 	GFX.DrawBackdropMath = gs_backdrop_math;
+	GFX.DrawMode7BG1Nomath = gs_mode7_nomath;
+	GFX.DrawMode7BG1Math = gs_mode7_math;
 }
 
 /* ---- bands ---------------------------------------------------------- */
@@ -530,8 +859,17 @@ void S9xGSSelectRenderers(void)
 /* Can the GS draw a band in the current PPU state? */
 static const char *unsupported(void)
 {
-	if (PPU.BGMode >= 5)
-		return PPU.BGMode == 7 ? "mode 7" : "hi-res mode";
+	if (PPU.BGMode == 5 || PPU.BGMode == 6)
+		return "hi-res mode";
+	if (PPU.BGMode == 7)
+	{
+		if (vram->m7 <= 0)
+			return "mode 7 (no GS memory for the map)";
+		if (Memory.FillRAM[0x2133] & 0x40)
+			return "mode 7 EXTBG";
+		if (Memory.FillRAM[0x2130] & 1)
+			return "direct colour";
+	}
 	if (IPPU.PseudoHires || IPPU.DoubleWidthPixels || IPPU.DoubleHeightPixels || IPPU.Interlace)
 		return "hi-res / interlace";
 	uint8 layers = Memory.FillRAM[0x212c] | Memory.FillRAM[0x212d];
@@ -570,6 +908,8 @@ bool8 S9xGSBandBegin(void)
 	frame_has_gs = true;
 	ps2_gs_stats.gs_bands++;
 	clut_update();
+	if (PPU.BGMode == 7)
+		m7_update();
 	return TRUE;
 }
 
@@ -682,29 +1022,32 @@ static void overlay_clear(int y0, int y1)
 
 static void upload_rows(int dbp, int y0, int y1, int width);
 
+/* Four pixels at a time when the row is 8-byte aligned (the R5900 traps
+ * on a misaligned load, and GFX.Screen comes from a std::vector). */
+static inline bool row_blank(int y)
+{
+	const uint16 *px = GFX.Screen + y * GFX.RealPPL;
+	if (((unsigned)(uintptr_t)px & 7) == 0)
+	{
+		const u64 *row = (const u64 *)px;
+		for (int i = 0; i < 64; i++)
+			if (row[i])
+				return false;
+		return true;
+	}
+	for (int x = 0; x < 256; x++)
+		if (px[x])
+			return false;
+	return true;
+}
+
 static void overlay_strip(int y0, int y1)
 {
 	/* only the rows that have something on them */
-	while (y0 < y1)
-	{
-		const uint16 *row = GFX.Screen + y0 * GFX.RealPPL;
-		int x = 0;
-		while (x < 256 && !row[x])
-			x++;
-		if (x < 256)
-			break;
+	while (y0 < y1 && row_blank(y0))
 		y0++;
-	}
-	while (y1 > y0)
-	{
-		const uint16 *row = GFX.Screen + (y1 - 1) * GFX.RealPPL;
-		int x = 0;
-		while (x < 256 && !row[x])
-			x++;
-		if (x < 256)
-			break;
+	while (y1 > y0 && row_blank(y1 - 1))
 		y1--;
-	}
 	if (y0 >= y1)
 		return;
 
@@ -894,6 +1237,7 @@ void ps2_gs_reset(void)
 	memset(S9xGSTileValid4, 0, sizeof(S9xGSTileValid4));
 	memset(S9xGSTileValid8, 0, sizeof(S9xGSTileValid8));
 	clut_valid = false;
+	m7_valid = false;
 }
 
 void ps2_gs_enable(bool on)

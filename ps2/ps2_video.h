@@ -54,6 +54,7 @@ struct Ps2GsVram
 	int atlas4;  /* 512 x 512 PSMT4: 4bpp tiles */
 	int atlas8;  /* 512 x 256 PSMT8: 8bpp tiles */
 	int clut[4]; /* palettes, 16 GS blocks each (see ps2_gs.cpp) */
+	int m7;      /* 1024 x 1024 PSMT8: the Mode 7 map, or <= 0 if it did not fit */
 };
 void ps2_video_set_gs_layout(int on); /* re-lays out VRAM, clears the screen */
 const Ps2GsVram *ps2_video_gs_vram(void); /* NULL unless the layout is on */

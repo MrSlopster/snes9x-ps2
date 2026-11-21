@@ -1754,6 +1754,8 @@ void S9xResetPPUFast (void)
 	IPPU.ColorsChanged = TRUE;
 	IPPU.OBJChanged = TRUE;
 #ifdef _EE
+	memset(S9xGSMode7Char, 1, sizeof(S9xGSMode7Char)); /* every character: everything */
+	S9xGSMode7AnyDirty = 1;
 	memset(S9xGSTileValid2, 0, sizeof(S9xGSTileValid2));
 	memset(S9xGSTileValid4, 0, sizeof(S9xGSTileValid4));
 	memset(S9xGSTileValid8, 0, sizeof(S9xGSTileValid8));
@@ -1905,6 +1907,8 @@ void S9xSoftResetPPU (void)
 	IPPU.ColorsChanged = TRUE;
 	IPPU.OBJChanged = TRUE;
 #ifdef _EE
+	memset(S9xGSMode7Char, 1, sizeof(S9xGSMode7Char)); /* every character: everything */
+	S9xGSMode7AnyDirty = 1;
 	memset(S9xGSTileValid2, 0, sizeof(S9xGSTileValid2));
 	memset(S9xGSTileValid4, 0, sizeof(S9xGSTileValid4));
 	memset(S9xGSTileValid8, 0, sizeof(S9xGSTileValid8));

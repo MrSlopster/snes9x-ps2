@@ -293,9 +293,11 @@ static void apply_mode(int mode)
 		}
 		gs_vram.ok = gs_vram.z > 0 && gs_vram.sub > 0 && gs_vram.atlas2 > 0 && gs_vram.atlas4 > 0 &&
 			     gs_vram.atlas8 > 0 && cluts;
-		printf("GS VRAM: fb %x %x target %x z %x sub %x atlas %x %x %x clut %x.. %s\n", fb[0].address,
+		/* Last and optional: a quarter of GS memory. */
+		gs_vram.m7 = graph_vram_allocate(1024, 1024, GS_PSM_8, GRAPH_ALIGN_BLOCK);
+		printf("GS VRAM: fb %x %x target %x z %x sub %x atlas %x %x %x clut %x.. m7 %x %s\n", fb[0].address,
 		       fb[1].address, gs_vram.target, gs_vram.z, gs_vram.sub, gs_vram.atlas2, gs_vram.atlas4,
-		       gs_vram.atlas8, gs_vram.clut[0], gs_vram.ok ? "ok" : "FAILED");
+		       gs_vram.atlas8, gs_vram.clut[0], gs_vram.m7, gs_vram.ok ? "ok" : "FAILED");
 	}
 
 	graph_set_mode(m.interlace, m.crt, m.ffmd, m.flicker);
