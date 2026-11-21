@@ -14,6 +14,9 @@
 #include "conffile.h"
 #include "ps2_video.h"
 #include "s9x_sound_driver_audsrv.h"
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "ps2_spu.h"
 #include "ps2_gs.h"
 #include "ps2_watchdog.h"
@@ -270,6 +273,8 @@ void S9xSyncSpeed(void)
 	next += frame_cycles;
 }
 
+void ps2_log_storage(const char *what, int err);
+
 void S9xAutoSaveSRAM(void)
 {
 	/* Called from RenderLine once per Settings.AutoSaveDelay frames when
@@ -279,9 +284,38 @@ void S9xAutoSaveSRAM(void)
 	printf("%s\n", line.c_str());
 	ps2_net_log(line.c_str());
 	PS2_STAGE("SRAM autosave (file write)");
+	errno = 0;
 	bool8 ok = Memory.SaveSRAM(path.c_str());
+	int err = errno;
 	PS2_STAGE("SRAM autosave done");
-	ps2_net_log(ok ? "SRAM autosave: written" : "SRAM autosave: FAILED");
+	if (ok)
+		ps2_net_log("SRAM autosave: written");
+	else
+		ps2_log_storage("SRAM autosave FAILED", err);
+}
+
+/* Why can a file not be written? One log line about the save folder. */
+void ps2_log_storage(const char *what, int err)
+{
+	std::string base = ps2_base_dir(), srm = base + "/srm", probe = srm + "/_probe.tmp";
+	struct stat st;
+	int base_ok = stat(base.c_str(), &st) == 0, srm_ok = stat(srm.c_str(), &st) == 0;
+	errno = 0;
+	int mk = mkdir(srm.c_str(), 0777), mk_err = errno;
+	errno = 0;
+	FILE *f = fopen(probe.c_str(), "wb");
+	int open_err = errno, wrote = 0;
+	if (f)
+	{
+		wrote = (int)fwrite("probe", 1, 5, f);
+		fclose(f);
+		remove(probe.c_str());
+	}
+	char line[240];
+	snprintf(line, sizeof(line), "STORAGE %s (errno %d): base %s exists=%d, srm exists=%d, mkdir=%d errno %d, probe file open=%d errno %d wrote=%d",
+		 what, err, base.c_str(), base_ok, srm_ok, mk, mk_err, f ? 1 : 0, open_err, wrote);
+	printf("%s\n", line);
+	ps2_net_log(line);
 }
 
 void S9xMessage(int type, int number, const char *message)
@@ -558,6 +592,7 @@ int main(int argc, char **argv)
 	ps2_gs_reset();
 	ps2_sound_resume();
 	ps2_watchdog_init();
+	ps2_log_storage("check at game start", 0);
 	ps2_watchdog_arm(true);
 
 	printf("Starting emulation\n");
