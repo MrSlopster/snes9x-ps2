@@ -120,8 +120,8 @@ static void ps2_sound_resume(void)
  * when it changes). */
 static void ps2_renderer_apply(void)
 {
-	ps2_gs_compare = ps2_cfg.gs_compare ? 1 : 0;
-	bool gs = ps2_cfg.renderer == PS2_RENDERER_GS;
+	ps2_gs_compare = (ps2_cfg.gs_compare || ps2_cfg.renderer == PS2_RENDERER_GS_CHECK) ? 1 : 0;
+	bool gs = ps2_cfg.renderer != PS2_RENDERER_SOFTWARE;
 	if (gs != ps2_gs_enabled())
 		ps2_gs_enable(gs);
 }

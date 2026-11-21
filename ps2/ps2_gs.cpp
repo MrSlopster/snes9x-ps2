@@ -790,6 +790,7 @@ static void compare(int width, int height)
 		return;
 
 	unsigned diff = 0, first_x = 0, first_y = 0, sw = 0, gs = 0, rows = 0;
+	unsigned min_x = 255, max_x = 0, max_y = 0;
 	for (int y = 0; y < height; y++)
 	{
 		const uint16 *a = GFX.Screen + y * GFX.RealPPL, *b = back + y * 512;
@@ -799,6 +800,11 @@ static void compare(int width, int height)
 			{
 				if (!diff && !row)
 					first_x = x, first_y = y, sw = a[x] & 0x7FFF, gs = b[x] & 0x7FFF;
+				if ((unsigned)x < min_x)
+					min_x = x;
+				if ((unsigned)x > max_x)
+					max_x = x;
+				max_y = y;
 				row++;
 			}
 		diff += row;
@@ -814,9 +820,9 @@ static void compare(int width, int height)
 		reported++;
 		char line[200];
 		snprintf(line, sizeof(line),
-			 "GSCMP frame %u: %u pixels differ in %u rows; first at %u,%u software %04x gs %04x (mode %d, %u gs bands, %u sw)",
-			 frame, diff, rows, first_x, first_y, sw, gs, PPU.BGMode, ps2_gs_stats.gs_bands,
-			 ps2_gs_stats.sw_bands);
+			 "GSCMP frame %u: %u pixels differ in %u rows, box x %u-%u y %u-%u; first at %u,%u software %04x gs %04x (mode %d, %u gs bands, %u sw)",
+			 frame, diff, rows, min_x, max_x, first_y, max_y, first_x, first_y, sw, gs, PPU.BGMode,
+			 ps2_gs_stats.gs_bands, ps2_gs_stats.sw_bands);
 		printf("%s\n", line);
 		ps2_net_log(line);
 		if (reported <= 3)

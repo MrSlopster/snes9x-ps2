@@ -26,6 +26,7 @@ enum
 {
 	PS2_RENDERER_SOFTWARE = 0,
 	PS2_RENDERER_GS, /* drawn by the Graphics Synthesizer (ps2_gs.h) */
+	PS2_RENDERER_GS_CHECK, /* GS, with every frame also drawn in software and compared (slow; reports on the log) */
 	PS2_RENDERER_COUNT
 };
 
