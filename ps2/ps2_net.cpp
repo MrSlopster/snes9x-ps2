@@ -18,6 +18,7 @@ extern "C" {
 #include "ps2_iop.h"
 #include "ps2_menu.h"
 #include "ps2_config.h"
+#include "ps2_watchdog.h"
 
 static bool ready = false;
 static bool tried = false;
@@ -157,6 +158,7 @@ static NetSettings find_settings(void)
 
 static void status(const char *line, const char *detail)
 {
+	ps2_stage = line; /* (string literals at every call) */
 	printf("netlog: %s %s\n", line, detail ? detail : "");
 	ps2_menu_status("Network log", line, detail);
 }
@@ -353,6 +355,11 @@ bool ps2_net_start(void)
 	 * This loop never blocks, so it must not outrank anything: the TCP/IP
 	 * stack's own thread has a lower priority than a main thread and
 	 * would never get to run. Wait at the lowest priority. */
+	/* The hang watchdog covers it: this loop kicks it as long as it gets
+	 * to run at all. If a thread above it spins for good, the kicks stop
+	 * and the watchdog puts that thread's program counter on screen. */
+	ps2_watchdog_init();
+	ps2_watchdog_arm(true);
 	ChangeThreadPriority(GetThreadId(), 127);
 	unsigned last = cycle_count(), ms = 0, acc = 0;
 	while (!bring_up_done && ms < NET_START_TIMEOUT_S * 1000)
@@ -365,8 +372,10 @@ bool ps2_net_start(void)
 			acc -= 294912;
 			ms++;
 		}
+		ps2_watchdog_kick();
 	}
 	ChangeThreadPriority(GetThreadId(), prio);
+	ps2_watchdog_arm(false);
 	if (!bring_up_done)
 	{
 		printf("netlog: start-up did not finish in %d s; continuing without it\n", NET_START_TIMEOUT_S);

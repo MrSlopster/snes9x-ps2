@@ -9,6 +9,7 @@ extern "C" {
 
 #include "ps2_watchdog.h"
 #include "ps2_net.h"
+#include "ps2_menu.h"
 
 const char *volatile ps2_stage = "start";
 
@@ -16,7 +17,10 @@ const char *volatile ps2_stage = "start";
 
 static volatile int armed = 0;
 static volatile unsigned since_kick = 0;
-static volatile unsigned stall_epc = 0, stall_ra = 0;
+static volatile unsigned stall_epc = 0;
+/* A few more samples after the first, to see the extent of a loop. */
+static volatile unsigned extra_epc[6];
+static volatile unsigned extra_n = 0;
 static volatile unsigned reports = 0;
 static int sema = -1;
 static unsigned char stack[16 * 1024] __attribute__((aligned(16)));
@@ -39,10 +43,12 @@ void ps2_watchdog_vblank(void)
 	if (!armed || sema < 0)
 		return;
 	unsigned n = ++since_kick;
+	unsigned epc;
+	__asm__ volatile("mfc0 %0, $14" : "=r"(epc));
+	if (n >= STALL_VBLANKS - 6 && n < STALL_VBLANKS)
+		extra_epc[n - (STALL_VBLANKS - 6)] = epc, extra_n = n - (STALL_VBLANKS - 6) + 1;
 	if (n == STALL_VBLANKS || (n > STALL_VBLANKS && n % (STALL_VBLANKS * 2) == 0))
 	{
-		unsigned epc;
-		__asm__ volatile("mfc0 %0, $14" : "=r"(epc));
 		stall_epc = epc;
 		iSignalSema(sema);
 	}
@@ -57,9 +63,26 @@ static void watchdog_thread(void *)
 		snprintf(line, sizeof(line), "WATCHDOG no frame for %u vblanks: pc %08x stage \"%s\" (report %u)", since_kick,
 			 stall_epc, ps2_stage ? ps2_stage : "?", ++reports);
 		printf("%s\n", line);
-		/* UDP: say it more than once */
-		for (int i = 0; i < 3; i++)
-			ps2_net_log(line);
+		char more[160];
+		snprintf(more, sizeof(more), "WATCHDOG earlier pcs: %08x %08x %08x %08x %08x %08x", extra_epc[0], extra_epc[1],
+			 extra_epc[2], extra_epc[3], extra_epc[4], extra_epc[5]);
+		printf("%s\n", more);
+		if (ps2_net_ready())
+		{
+			/* UDP: say it more than once */
+			for (int i = 0; i < 3; i++)
+				ps2_net_log(line);
+			ps2_net_log(more);
+		}
+		else
+		{
+			/* No network (yet): the screen is the only way out. */
+			char a[80], b[80];
+			snprintf(a, sizeof(a), "pc %08x  stage: %s", stall_epc, ps2_stage ? ps2_stage : "?");
+			snprintf(b, sizeof(b), "%08x %08x %08x %08x %08x", extra_epc[1], extra_epc[2], extra_epc[3],
+				 extra_epc[4], extra_epc[5]);
+			ps2_menu_status("Hang watchdog (please report these)", a, b);
+		}
 	}
 }
 
