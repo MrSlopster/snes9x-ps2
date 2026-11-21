@@ -77,6 +77,7 @@ and embedded in the ELF.
 | SPC700 loop, idle skip, lazy timers | `apu/bapu/smp/` (`ee_*`) |
 | Deferred APU queue, handshake skip | `apu/apu.cpp` |
 | Profiler | `ps2/ps2_prof.*` |
+| Hang watchdog (reports the stuck PC and stage over the network log) | `ps2/ps2_watchdog.*` |
 | Network log | `ps2/ps2_net.*` (settings from `mc0:/SYS-CONF/IPCONFIG.DAT`) |
 
 ## Hardware pitfalls already hit

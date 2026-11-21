@@ -16,6 +16,7 @@
 #include "s9x_sound_driver_audsrv.h"
 #include "ps2_spu.h"
 #include "ps2_gs.h"
+#include "ps2_watchdog.h"
 
 #include "ps2_dirs.h"
 #include "ps2_controls.h"
@@ -544,6 +545,8 @@ int main(int argc, char **argv)
 	ps2_renderer_apply();
 	ps2_gs_reset();
 	ps2_sound_resume();
+	ps2_watchdog_init();
+	ps2_watchdog_arm(true);
 
 	printf("Starting emulation\n");
 
@@ -553,10 +556,12 @@ int main(int argc, char **argv)
 		/* Select+Start: in-game menu. */
 		if ((ps2_pad_held(0) & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START))
 		{
+			ps2_watchdog_arm(false);
 			ps2_sound_pause();
 			int action = ps2_menu_pause();
 			ps2_renderer_apply();
 			ps2_sound_resume();
+			ps2_watchdog_arm(true);
 			if (action == PS2_PAUSE_LOAD_ROM)
 			{
 				load_other = true;
@@ -564,10 +569,15 @@ int main(int argc, char **argv)
 			}
 		}
 
+		PS2_STAGE("input");
 		ps2_input_poll();
+		PS2_STAGE("emulating");
 		S9xMainLoop();
+		PS2_STAGE("sound events");
 		ps2_spu_frame();
+		PS2_STAGE("profiler");
 		ps2_prof_frame();
+		ps2_watchdog_kick();
 	}
 
 	printf("Saving SRAM: %s\n", S9xGetFilename(".srm", SRAM_DIR).c_str());
@@ -577,6 +587,7 @@ int main(int argc, char **argv)
 		break;
 
 	/* Back to the browser in the current game's folder. */
+	ps2_watchdog_arm(false);
 	ps2_sound_pause();
 	start_dir = Memory.ROMFilename.substr(0, Memory.ROMFilename.rfind('/') + 1);
 	failed_name = Memory.ROMFilename.substr(Memory.ROMFilename.rfind('/') + 1);

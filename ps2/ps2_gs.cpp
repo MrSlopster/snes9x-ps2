@@ -23,6 +23,7 @@ extern "C" {
 #include "ps2_gs.h"
 #include "ps2_video.h"
 #include "ps2_net.h"
+#include "ps2_watchdog.h"
 
 int ps2_gs_compare = 0;
 Ps2GsStats ps2_gs_stats;
@@ -68,17 +69,23 @@ static void stream_send(void)
 	if (qw)
 	{
 		ps2_gs_stats.bytes += qw * 16;
-		dma_wait_fast(); /* the previous buffer */
+		PS2_STAGE("gs: waiting for the previous buffer's DMA");
+		dma_wait_fast();
 		FlushCache(0);
+		PS2_STAGE("gs: sending a buffer");
 		dma_channel_send_normal(DMA_CHANNEL_GIF, stream[cur], qw, 0, 0);
+		PS2_STAGE("gs: buffer sent");
 		cur ^= 1;
 	}
 	stream_begin();
 }
 
+/* Room for qw more qwords. Requests come in two sizes: small ones, which
+ * the slack behind send_limit absorbs even when it is not checked for
+ * every tile, and big image transfers, which must fit outright. */
 static inline void need(unsigned qw)
 {
-	if (sp + qw * 2 > send_limit)
+	if (sp + qw * 2 > send_limit && sp != stream[cur])
 		stream_send();
 }
 
@@ -548,6 +555,7 @@ static const char *unsupported(void)
 
 bool8 S9xGSBandBegin(void)
 {
+	PS2_STAGE("gs: band");
 	if (!enabled || !vram || !frame_open)
 		return FALSE;
 	const char *why = unsupported();
@@ -757,8 +765,8 @@ static void upload_rows(int dbp, int y0, int y1, int width)
 	for (int y = y0; y <= y1;)
 	{
 		int rows = y1 - y + 1;
-		if (rows > 32)
-			rows = 32;
+		if (rows > 8) /* 256 qwords at a time */
+			rows = 8;
 		uint16 *d = (uint16 *)image(dbp, 512 / 64, GS_PSM_16, 0, y, w, rows, (unsigned)(w * rows * 2));
 		for (int r = 0; r < rows; r++)
 			memcpy(d + r * w, GFX.Screen + (y + r) * GFX.RealPPL, (size_t)w * 2);
@@ -777,6 +785,7 @@ static void compare(int width, int height)
 
 	stream_send();
 	dma_wait_fast();
+	PS2_STAGE("gs: reading the picture back");
 	if (!ps2_screenshot(back, (unsigned)(vram->target >> 6), 0, 0, 512, 240, GS_PSM_16))
 		return;
 
@@ -868,7 +877,9 @@ void ps2_gs_frame_end(int width, int height)
 	}
 
 	stream_send();
+	PS2_STAGE("gs: waiting for the frame's last DMA");
 	dma_wait_fast();
+	PS2_STAGE("gs: frame sent");
 }
 
 void ps2_gs_reset(void)

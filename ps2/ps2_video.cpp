@@ -37,6 +37,7 @@
 #include <draw3d.h>
 
 #include "ps2_video.h"
+#include "ps2_watchdog.h"
 
 #define FB_WIDTH  640
 
@@ -97,6 +98,7 @@ static int vsync_id = -1;
 static s32 vblank_flip(s32 cause)
 {
 	(void)cause;
+	ps2_watchdog_vblank();
 
 	int p = pending;
 	if (p >= 0)
@@ -503,13 +505,18 @@ void ps2_video_present_target(int width, int height)
 {
 	if (!video_ready)
 		return;
+	PS2_STAGE("present: waiting for a back buffer");
 	int target = acquire_back_buffer();
 	qword_t *q = present_commands(frame_packet->data, target, width, height);
 
 	FlushCache(0);
+	PS2_STAGE("present: sending");
 	dma_channel_send_normal(DMA_CHANNEL_GIF, frame_packet->data, q - frame_packet->data, 0, 0);
+	PS2_STAGE("present: waiting for DMA");
 	dma_wait_fast();
+	PS2_STAGE("present: waiting for the GS to finish");
 	draw_wait_finish();
+	PS2_STAGE("present: done");
 
 	present(target);
 }
