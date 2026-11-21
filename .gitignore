@@ -503,3 +503,11 @@ MigrationBackup/
 .DS_Store
 *.lock
 profile
+
+# Agent tooling and its output (plans, specs, session state). What other
+# agents need to know goes in AGENTS.md.
+docs/superpowers/
+.omc/
+.claude/
+CLAUDE.md
+CLAUDE.local.md

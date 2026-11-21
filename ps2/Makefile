@@ -1,6 +1,6 @@
 EE_BIN = snes9x.elf
 
-# Baseline optimization: -O3 (spec); -Ofast left for hardware testing.
+# Baseline optimization: -O3; -Ofast left for hardware testing.
 EE_OPTFLAGS = -O3
 
 SNES9X_FLAGS := -DZLIB -DUNZIP_SUPPORT -DJMA_SUPPORT -DSDD1_DECOMP \
@@ -8,7 +8,7 @@ SNES9X_FLAGS := -DZLIB -DUNZIP_SUPPORT -DJMA_SUPPORT -DSDD1_DECOMP \
 	-DVERSION=\"1.63\" \
 	-DPIXEL_FORMAT=BGR555
 
-# EE performance profile carried over from the 2011 fork (spec §Build):
+# EE performance profile carried over from the 2011 fork:
 # R5900 pipeline tuning + hard float + single-precision fast math.
 EE_CFLAGS += $(SNES9X_FLAGS) -mtune=r5900 -mhard-float \
 	-fsingle-precision-constant -mfused-madd -ffast-math
