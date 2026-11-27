@@ -18,6 +18,7 @@ enum
 
 extern int ps2_prof_enabled;
 extern int ps2_prof_pmc; /* also read the R5900 performance counters */
+extern int ps2_prof_sample_all; /* PC sampler dumps every bucket, not the top 60 (ps2.cfg: psamp_all=1) */
 
 void ps2_prof_push(int bucket);
 void ps2_prof_pop(void);

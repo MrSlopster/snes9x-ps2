@@ -75,6 +75,8 @@ void ps2_config_load(void)
 			ps2_cfg.renderer = (n >= 0 && n < PS2_RENDERER_COUNT) ? n : PS2_RENDERER_SOFTWARE;
 		else if (!strcmp(key, "gs_compare"))
 			ps2_cfg.gs_compare = n != 0;
+		else if (!strcmp(key, "psamp_all"))
+			ps2_prof_sample_all = n != 0;
 		else if (!strcmp(key, "dump_frames"))
 			ps2_cfg.dump_frames = n != 0;
 		else if (!strcmp(key, "idle_skip"))
@@ -115,6 +117,8 @@ bool ps2_config_save(void)
 		fprintf(f, "gs_compare=1\n");
 	if (ps2_cfg.dump_frames)
 		fprintf(f, "dump_frames=1\n");
+	if (ps2_prof_sample_all)
+		fprintf(f, "psamp_all=1\n");
 	fclose(f);
 	return true;
 }

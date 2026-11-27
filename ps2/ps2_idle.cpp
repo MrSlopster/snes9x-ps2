@@ -275,6 +275,8 @@ struct KnownLoop
 	bool valid;
 	LoopState s;       /* (the event fields are not compared) */
 	int32 c;           /* master cycles per pass */
+	uint32 recip;      /* floor(65536 / c): passes in n cycles >= (n * recip) >> 16 */
+	bool in_rom;       /* the code cannot have changed */
 	int32 fast_rom_speed;
 	uint8 code_len;
 	const uint8 *code_ptr;
@@ -347,6 +349,8 @@ static void remember_loop(uint16 target, uint16 after_branch, const LoopState &s
 
 	known.s = state;
 	known.c = c;
+	known.recip = 65536u / (uint32)c;
+	known.in_rom = code >= Memory.ROM && code < Memory.ROM + CMemory::MAX_ROM_SIZE;
 	known.fast_rom_speed = CPU.FastROMSpeed;
 	known.code_len = (uint8)len;
 	known.code_ptr = code;
@@ -376,7 +380,7 @@ static inline bool at_known_loop(void)
 	for (unsigned i = 0; i < known.nbytes; i++)
 		if (*known.byte_ptr[i] != known.byte_val[i])
 			return false;
-	return memcmp(known.code_ptr, known.code, known.code_len) == 0;
+	return known.in_rom || memcmp(known.code_ptr, known.code, known.code_len) == 0;
 }
 
 /* Reset, ROM load, state load: nothing remembered applies any more. */
@@ -463,8 +467,12 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 	{
 		int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
 		/* Every skipped pass must end before the limit (events fire at
-		 * "cycles >= event"). */
-		int32 k = (limit - CPU.Cycles - 1) / known.c;
+		 * "cycles >= event"). This runs some 800 times a frame and the
+		 * R5900 takes 37 cycles to divide: multiply by the reciprocal,
+		 * rounded down - at worst one pass fewer is skipped, and that
+		 * pass is then simply executed. */
+		int32 room = limit - CPU.Cycles - 1;
+		int32 k = room > 0 ? (int32)(((uint32)room * known.recip) >> 16) : 0;
 		if (k > 0 && SHADOW)
 			shadow_expect(k, known.c);
 		else if (k > 0)

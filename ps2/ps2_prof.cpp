@@ -28,6 +28,7 @@ extern "C" char _ftext[], _etext[];
 
 int ps2_prof_enabled = 0;
 int ps2_prof_pmc = 0;
+int ps2_prof_sample_all = 0;
 
 /* Profiler output: console (PCSX2 log / ps2link) and the UDP network log. */
 static void out(const char *fmt, ...)
@@ -226,6 +227,29 @@ static void sampler_dump(void)
 	if (!hist)
 		return;
 	out("PSAMP total %u other %u text %08x-%08x", samples_total, samples_other, text0, text1);
+	if (ps2_prof_sample_all)
+	{
+		/* Every bucket that was hit, in address order, a dozen per line:
+		 * what a code-layout pass needs (tools/psamp.py reads both). */
+		char line[240];
+		int n = 0;
+		for (unsigned i = 0; i < hist_n; i++)
+		{
+			if (!hist[i])
+				continue;
+			n += snprintf(line + n, sizeof(line) - n, " %x:%u", text0 + (i << SAMPLE_SHIFT), hist[i]);
+			if (n > 200)
+			{
+				out("PSAMPA%s", line);
+				n = 0;
+			}
+		}
+		if (n)
+			out("PSAMPA%s", line);
+		memset(hist, 0, hist_n * sizeof(unsigned));
+		samples_total = samples_other = 0;
+		return;
+	}
 	for (int k = 0; k < DUMP_TOP; k++)
 	{
 		unsigned best = 0, bi = 0;
