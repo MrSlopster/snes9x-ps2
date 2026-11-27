@@ -155,7 +155,6 @@ bool8 S9xDeinitUpdate(int width, int height)
 		ps2_prof_overlay(GFX.Screen, GFX.RealPPL, width, height);
 		ps2_gs_frame_end(width, height);
 		ps2_gs_log_stats();
-		ps2_video_present_target(width, height);
 		return TRUE;
 	}
 	ps2_prof_fingerprint(width, height);

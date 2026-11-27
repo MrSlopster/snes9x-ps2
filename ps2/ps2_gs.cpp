@@ -1500,7 +1500,6 @@ void ps2_gs_frame_end(int width, int height)
 	if (!frame_is_gs)
 		return;
 	frame_is_gs = false;
-	(void)width;
 	if (frame_overlay)
 	{
 		overlay_strip(0, OVERLAY_TOP < height ? OVERLAY_TOP : height);
@@ -1508,8 +1507,18 @@ void ps2_gs_frame_end(int width, int height)
 			overlay_strip(height - OVERLAY_BOTTOM, height);
 	}
 
-	/* (ps2_video_present_target waits for this before it sends) */
+	/* The frame's last commands present it (ps2_video.cpp). */
+	const void *present;
+	unsigned qw = ps2_video_present_commands(&present, width, height);
+	run_close();
+	need(qw);
+	memcpy(sp, present, qw * 16);
+	sp += qw * 2;
+	/* (they leave their own drawing state behind) */
+	z_test = -1;
+
 	stream_send();
+	ps2_video_present_sent();
 	PS2_STAGE("gs: frame sent");
 }
 

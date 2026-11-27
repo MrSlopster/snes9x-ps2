@@ -59,7 +59,10 @@ struct Ps2GsVram
 void ps2_video_set_gs_layout(int on); /* re-lays out VRAM, clears the screen */
 const Ps2GsVram *ps2_video_gs_vram(void); /* NULL unless the layout is on */
 /* Show the top-left width x height of the target as the next frame. */
-void ps2_video_present_target(int width, int height);
+/* The commands, in qwords (0: no video), then - when they have been sent
+ * after everything else of the frame - the go-ahead to show it. */
+unsigned ps2_video_present_commands(const void **commands, int width, int height);
+void ps2_video_present_sent(void);
 /* Wait until a frame presented that way has been drawn completely. */
 void ps2_video_settle(void);
 

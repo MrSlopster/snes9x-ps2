@@ -36,7 +36,7 @@ extern int ps2_gs_defer, ps2_gs_crc;
 extern int ps2_gs_dump;
 
 /* Frame hooks (ps2_main.cpp). A GS frame is in the GS target and wants
- * ps2_video_present_target(); a frame that was all software is presented
+ * ps2_gs_frame_end(), which also presents it; a frame that was all software is presented
  * from GFX.Screen as usual. */
 /* overlay: text will be drawn into GFX.Screen before frame_end (profiler,
  * frame rate, core messages); it is laid over the GS picture. */

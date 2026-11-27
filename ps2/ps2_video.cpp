@@ -549,24 +549,31 @@ void ps2_video_set_gs_layout(int on)
 		apply_mode(cur_mode);
 }
 
-void ps2_video_present_target(int width, int height)
+/* Presenting a GS-rendered frame, in two steps: the commands that stretch
+ * it into a display buffer (ending in FINISH), which the GS renderer puts
+ * at the end of its own last buffer of the frame - a packet of their own
+ * could only be sent once the GS had drawn the whole frame, and the wait
+ * for that was most of the video time - and, once that buffer is sent,
+ * the note for the vblank handler to show the frame when the GS is done. */
+static int present_target = -1;
+
+unsigned ps2_video_present_commands(const void **commands, int width, int height)
 {
 	if (!video_ready)
-		return;
+		return 0;
 	PS2_STAGE("present: waiting for a back buffer");
-	int target = acquire_back_buffer();
-	qword_t *q = present_commands(frame_packet->data, target, width, height);
+	present_target = acquire_back_buffer();
+	qword_t *q = present_commands(frame_packet->data, present_target, width, height);
+	*commands = frame_packet->data;
+	return (unsigned)(q - frame_packet->data);
+}
 
-	/* The GS renderer's last buffer goes first. */
-	PS2_STAGE("present: waiting for DMA");
-	dma_wait_fast();
-	FlushCache(0);
-	PS2_STAGE("present: sending");
-	dma_channel_send_normal(DMA_CHANNEL_GIF, frame_packet->data, q - frame_packet->data, 0, 0);
+void ps2_video_present_sent(void)
+{
+	if (present_target >= 0)
+		awaiting = present_target; /* not waited for: see 'awaiting' */
+	present_target = -1;
 	PS2_STAGE("present: done");
-
-	/* Not waited for: see 'awaiting'. */
-	awaiting = target;
 }
 
 /* Stretch the top-left width x height of the SNES texture over a display
