@@ -90,6 +90,25 @@ Measured over ps2link with `show_fps=3` (PMC lines) and `psamp_all=1`
   (9.14 ms with every sampled function listed, 9.43 ms with only the
   hottest 94). Layout changes move the result by +-0.15 ms either way, so
   a change smaller than that proves nothing.
+- Also no win: `dma.cpp` and `ppu.cpp` at `-Os` (6 k more data-cache
+  misses - switch statements become jump tables in `.rodata`), and the
+  idle hook's own data plus `DMA[]` in the scratchpad (0.3 k fewer data
+  misses, lost again on the instruction side). The opcode tables in the
+  scratchpad did hold up (15.2 k to 12.6 k data misses with every frame
+  rendered).
+- Compare builds with `frameskip=0`. With the default (Auto) a scene near
+  the limit skips rendering now and then, and the picture and video
+  buckets then say how many frames were skipped, not what a frame costs:
+  the F-Zero race reads 2.7 ms picture + 0.5 ms video on Auto and
+  5.7 + 1.4 ms with every frame rendered (41 GS bands, about 1370 tiles
+  and 240 KB of GS data per frame). That, not the 65816's caches, is the
+  largest single cost left in that scene.
+- A cache model is available on the host: build the oracle with `-g` and
+  run it under `valgrind --tool=cachegrind --I1=16384,2,64
+  --D1=8192,2,64`. It models the software renderer and the accurate DSP,
+  not the GS and SPU2 paths, but the 65816 side carries over: it put the
+  opcode table at 1.6 k data misses a frame before that was measured on
+  the console (2.1 k).
 
 ## Where things are
 
