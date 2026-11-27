@@ -842,6 +842,12 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
 			case 0x2132: // COLDATA
 				if (Byte != Memory.FillRAM[0x2132])
 				{
+#ifdef _EE
+					/* PS2: the GS renderer keeps the fixed colour per
+					 * scanline; a sky gradient (one write every few
+					 * lines) then does not cut the picture into bands. */
+					if (!S9xGSFixedColourWrite())
+#endif
 					FLUSH_REDRAW();
 					if (Byte & 0x80)
 						PPU.FixedColourBlue  = Byte & 0x1f;

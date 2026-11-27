@@ -26,6 +26,11 @@ bool ps2_gs_enabled(void);
 /* Debug: also render every GS band in software, read the GS picture back
  * at the end of the frame and report the differences on the log. */
 extern int ps2_gs_compare;
+/* Debug (ps2.cfg gs_defer=0, gs_crc=1): split bands at every fixed-colour
+ * write as the software renderer does; log a checksum of the GS picture
+ * every 10th frame ("GSCRC"). The two together check the per-scanline
+ * fixed colour, which the compare mode cannot (it switches it off). */
+extern int ps2_gs_defer, ps2_gs_crc;
 
 /* Frame hooks (ps2_main.cpp). A GS frame is in the GS target and wants
  * ps2_video_present_target(); a frame that was all software is presented

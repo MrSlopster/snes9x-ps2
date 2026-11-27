@@ -469,6 +469,63 @@ static inline unsigned rgb8(unsigned c15)
 }
 
 /* A flat rectangle (the stream must not be inside a tile run). */
+/* The fixed colour ($2132) of each scanline of the band being collected.
+ * Games write it every few lines for gradients; each write used to end
+ * the band (F-Zero: 20 of 41 bands a frame). S9xGSFixedColourWrite notes
+ * the old colour for the lines up to the write instead, and the two
+ * places that use the colour draw it in runs. fixed_filled: lines below
+ * it are noted. */
+int ps2_gs_defer = 1, ps2_gs_crc = 0;
+static uint16 fixed_line[SNES_HEIGHT_EXTENDED + 1];
+static int fixed_filled = 0;
+
+static inline uint16 fixed_now(void)
+{
+	return BUILD_PIXEL(IPPU.XB[PPU.FixedColourRed], IPPU.XB[PPU.FixedColourGreen], IPPU.XB[PPU.FixedColourBlue]);
+}
+
+static void fixed_fill(int upto) /* exclusive */
+{
+	if (upto > SNES_HEIGHT_EXTENDED + 1)
+		upto = SNES_HEIGHT_EXTENDED + 1;
+	uint16 c = fixed_now();
+	for (int y = fixed_filled; y < upto; y++)
+		fixed_line[y] = c;
+	if (upto > fixed_filled)
+		fixed_filled = upto;
+}
+
+static void flat_rect(int x0, int y0, int x1, int y1, unsigned z, unsigned rgb, unsigned alpha, int abe);
+
+/* Lines y0..y1-1 in the fixed colour, one rectangle per run. */
+static void fixed_rects(int y0, int y1, unsigned alpha, int abe)
+{
+	for (int y = y0; y < y1;)
+	{
+		int e = y + 1;
+		while (e < y1 && fixed_line[e] == fixed_line[y])
+			e++;
+		flat_rect(0, y, 256, e, 0, rgb8(fixed_line[y]), alpha, abe);
+		y = e;
+	}
+}
+
+static const char *unsupported(void);
+
+bool8 S9xGSFixedColourWrite(void)
+{
+	if (!enabled || !vram || !frame_open || !ps2_gs_defer || ps2_gs_compare || !IPPU.RenderThisFrame)
+		return FALSE;
+	/* Only while the GS draws the band this ends up in: every register
+	 * that could change that ends the band itself. */
+	if (unsupported())
+		return FALSE;
+	if (fixed_filled < (int)IPPU.PreviousLine)
+		fixed_filled = IPPU.PreviousLine;
+	fixed_fill(IPPU.CurrentLine);
+	return TRUE;
+}
+
 static void flat_rect(int x0, int y0, int x1, int y1, unsigned z, unsigned rgb, unsigned alpha, int abe)
 {
 	u64 *p = ad(4);
@@ -508,7 +565,10 @@ void S9xGSScreen(bool8 sub)
 	/* Depth 0 everywhere. The sub screen starts as the fixed colour with
 	 * alpha clear ("not a sub-screen pixel"); the main screen's colour is
 	 * covered completely by the layers and the backdrop. */
-	flat_rect(0, GFX.StartY, 256, GFX.EndY + 1, 0, sub ? rgb8(GFX.FixedColour) : 0, 0, 0);
+	if (sub)
+		fixed_rects(GFX.StartY, GFX.EndY + 1, 0, 0);
+	else
+		flat_rect(0, GFX.StartY, 256, GFX.EndY + 1, 0, 0, 0, 0);
 }
 
 void S9xGSOBJBegin(void)
@@ -931,6 +991,10 @@ bool8 S9xGSBandBegin(void)
 		ps2_gs_stats.sw_reason = why;
 		return FALSE;
 	}
+	/* The band's remaining lines have the colour of now. */
+	if (fixed_filled < (int)GFX.StartY)
+		fixed_filled = GFX.StartY;
+	fixed_fill(GFX.EndY + 1);
 	band_active = true;
 	sub_drawn = false;
 	in_obj = false;
@@ -970,7 +1034,7 @@ static void band_math(void)
 		p = ad(2);
 		AD(p, GS_SET_TEST(0, 0, 0, 0, 1, 1, 1, ZTST_ALWAYS), GS_REG_TEST);
 		AD(p, (half && !use_sub) ? halved : full, GS_REG_ALPHA);
-		flat_rect(0, y0, 256, y1, 0, rgb8(GFX.FixedColour), 0x80, 1);
+		fixed_rects(y0, y1, 0x80, 1);
 		return;
 	}
 
@@ -1107,6 +1171,7 @@ void ps2_gs_frame_begin(bool overlay)
 {
 	static int generation = -1;
 	frame_open = enabled && (vram = ps2_video_gs_vram()) != NULL;
+	fixed_filled = 0;
 	if (frame_open && vram->generation != generation)
 	{
 		/* GS memory was laid out again (video mode change): all gone. */
@@ -1228,6 +1293,29 @@ static void compare(int width, int height)
 	}
 }
 
+/* Debug: a checksum of the picture in GS memory, for comparing two runs. */
+static void picture_crc(int height)
+{
+	static uint16 *back = NULL;
+	if (!back)
+		back = (uint16 *)memalign(64, 512 * 240 * 2);
+	if (!back || height > 240)
+		return;
+	stream_send();
+	dma_wait_fast();
+	ps2_video_settle();
+	if (!ps2_screenshot(back, (unsigned)(vram->target >> 6), 0, 0, 512, 240, GS_PSM_16))
+		return;
+	uint32 h = 2166136261u;
+	for (int y = 0; y < height; y++)
+		for (int x = 0; x < 256; x++)
+			h = (h ^ (back[y * 512 + x] & 0x7fff)) * 16777619u;
+	char line[80];
+	snprintf(line, sizeof(line), "GSCRC %u %08x", (unsigned)IPPU.TotalEmulatedFrames, (unsigned)h);
+	printf("%s\n", line);
+	ps2_net_log(line);
+}
+
 static bool frame_is_gs = false;
 
 bool ps2_gs_frame_picture(int width, int height)
@@ -1244,6 +1332,8 @@ bool ps2_gs_frame_picture(int width, int height)
 		upload_rows(vram->target >> 6, sw_bands[i].y0, sw_bands[i].y1, width);
 	if (ps2_gs_compare)
 		compare(width, height);
+	if (ps2_gs_crc && IPPU.TotalEmulatedFrames % 10 == 0)
+		picture_crc(height);
 	return true;
 }
 

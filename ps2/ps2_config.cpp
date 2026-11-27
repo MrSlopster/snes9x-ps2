@@ -12,6 +12,7 @@
 #include "ps2_video.h"
 #include "ps2_prof.h"
 #include "ps2_idle.h"
+#include "ps2_gs.h"
 
 Ps2Config ps2_cfg;
 
@@ -75,6 +76,10 @@ void ps2_config_load(void)
 			ps2_cfg.renderer = (n >= 0 && n < PS2_RENDERER_COUNT) ? n : PS2_RENDERER_SOFTWARE;
 		else if (!strcmp(key, "gs_compare"))
 			ps2_cfg.gs_compare = n != 0;
+		else if (!strcmp(key, "gs_defer"))
+			ps2_gs_defer = n != 0;
+		else if (!strcmp(key, "gs_crc"))
+			ps2_gs_crc = n != 0;
 		else if (!strcmp(key, "psamp_all"))
 			ps2_prof_sample_all = n != 0;
 		else if (!strcmp(key, "dump_frames"))
