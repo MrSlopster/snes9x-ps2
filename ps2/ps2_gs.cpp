@@ -276,7 +276,9 @@ static void tile_upload(const Atlas &a, unsigned n, const uint8 *pix)
  * coordinates. */
 extern struct SLineMatrixData LineMatrixData[240];
 
-uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Row[128], S9xGSMode7Char[256];
+uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Char[256];
+uint16 S9xGSMode7List[S9X_GS_MODE7_LIST];
+uint32 S9xGSMode7Count = 0;
 uint8 S9xGSMode7AnyDirty = 1;
 static bool m7_valid = false;
 static bool m7_tile0_valid = false;
@@ -319,7 +321,9 @@ static void m7_update(void)
 
 	/* Which cells to send again: the written ones, and - only if any
 	 * character data was written - every cell showing such a character.
-	 * Nothing here walks the whole map unless it has to. */
+	 * Nothing here walks the whole map unless it has to: the written
+	 * cells come as a list while there are not too many of them. */
+	const bool listed = S9xGSMode7Count <= S9X_GS_MODE7_LIST;
 	static uint16 list[2048];
 	unsigned count = 0;
 	bool all = !m7_valid;
@@ -348,18 +352,25 @@ static void m7_update(void)
 						all = true;
 				}
 		}
+		else if (listed)
+		{
+			for (unsigned i = 0; i < S9xGSMode7Count; i++)
+			{
+				unsigned cell = S9xGSMode7List[i];
+				if (Memory.VRAM[cell * 2] != m7_shown[cell])
+					list[count++] = (uint16)cell; /* (the list is the larger) */
+			}
+		}
 		else
 		{
-			for (unsigned row = 0; row < 128 && !all; row++)
-				if (S9xGSMode7Row[row])
-					for (unsigned cell = row * 128; cell < row * 128 + 128; cell++)
-						if (S9xGSMode7Cell[cell] && Memory.VRAM[cell * 2] != m7_shown[cell])
-						{
-							if (count < sizeof(list) / sizeof(list[0]))
-								list[count++] = (uint16)cell;
-							else
-								all = true;
-						}
+			for (unsigned cell = 0; cell < 0x4000 && !all; cell++)
+				if (S9xGSMode7Cell[cell] && Memory.VRAM[cell * 2] != m7_shown[cell])
+				{
+					if (count < sizeof(list) / sizeof(list[0]))
+						list[count++] = (uint16)cell;
+					else
+						all = true;
+				}
 		}
 	}
 
@@ -392,8 +403,12 @@ static void m7_update(void)
 		m7_tile0_valid = true;
 	}
 
-	memset(S9xGSMode7Cell, 0, sizeof(S9xGSMode7Cell));
-	memset(S9xGSMode7Row, 0, sizeof(S9xGSMode7Row));
+	if (listed)
+		for (unsigned i = 0; i < S9xGSMode7Count; i++)
+			S9xGSMode7Cell[S9xGSMode7List[i]] = 0;
+	else
+		memset(S9xGSMode7Cell, 0, sizeof(S9xGSMode7Cell));
+	S9xGSMode7Count = 0;
 	memset(S9xGSMode7Char, 0, sizeof(S9xGSMode7Char));
 	S9xGSMode7AnyDirty = 0;
 	m7_valid = true;

@@ -53,7 +53,9 @@ static void wav_header(FILE *f, unsigned frames)
 #ifdef _EE
 /* The GS renderer's hooks in gfx.cpp: not here. */
 uint8 S9xGSTileValid2[4096], S9xGSTileValid4[2048], S9xGSTileValid8[1024];
-uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Row[128], S9xGSMode7Char[256], S9xGSMode7AnyDirty;
+uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Char[256], S9xGSMode7AnyDirty;
+uint16 S9xGSMode7List[S9X_GS_MODE7_LIST];
+uint32 S9xGSMode7Count;
 bool8 S9xGSBandBegin(void) { return FALSE; }
 void S9xGSBandEnd(void) {}
 void S9xGSBandSoftware(void) {}

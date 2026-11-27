@@ -217,8 +217,12 @@ void S9xGSOBJEnd (void);
 extern uint8 S9xGSTileValid2[4096], S9xGSTileValid4[2048], S9xGSTileValid8[1024];
 /* Mode 7 reads the first 32 KB of VRAM as words: low byte = map cell
  * (128 x 128), high byte = character data (256 characters of 64 bytes).
- * Written cells, the map rows they are in, and written characters. */
-extern uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Row[128], S9xGSMode7Char[256];
+ * Written cells (flags, and a list of them while it has room: Count
+ * keeps counting past the end) and written characters. */
+#define S9X_GS_MODE7_LIST 1024
+extern uint8 S9xGSMode7Cell[0x4000], S9xGSMode7Char[256];
+extern uint16 S9xGSMode7List[S9X_GS_MODE7_LIST];
+extern uint32 S9xGSMode7Count;
 extern uint8 S9xGSMode7AnyDirty;
 static inline void S9xGSVRAMWrite (uint32 address)
 {
@@ -229,10 +233,12 @@ static inline void S9xGSVRAMWrite (uint32 address)
 	{
 		if (address & 1)
 			S9xGSMode7Char[address >> 7] = 1;
-		else
+		else if (!S9xGSMode7Cell[address >> 1])
 		{
 			S9xGSMode7Cell[address >> 1] = 1;
-			S9xGSMode7Row[address >> 8] = 1;
+			if (S9xGSMode7Count < S9X_GS_MODE7_LIST)
+				S9xGSMode7List[S9xGSMode7Count] = (uint16) (address >> 1);
+			S9xGSMode7Count++;
 		}
 		S9xGSMode7AnyDirty = 1;
 	}
