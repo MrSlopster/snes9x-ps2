@@ -8,6 +8,7 @@
 extern int ps2_idle_enabled;
 extern uint32 ps2_idle_skipped_cycles; /* master cycles since last reset */
 extern uint32 ps2_idle_plain_skips, ps2_idle_handshake_skips, ps2_idle_handshake_passes;
+extern uint32 ps2_idle_crossings;
 
 void S9xIdleLoopCheck(uint16 target, uint16 after_branch);
 /* Reset, ROM load, state load (called from the core). */

@@ -36,6 +36,7 @@
 #include "memmap.h"
 #include "cpuexec.h"
 #include "apu.h"
+#include "ppu.h"
 
 #include "ps2_idle.h"
 
@@ -44,6 +45,7 @@ uint32 ps2_idle_skipped_cycles = 0; /* master cycles, reset by the profiler */
 uint32 ps2_idle_plain_skips = 0;     /* fast-forwards of plain polling loops */
 uint32 ps2_idle_handshake_skips = 0; /* fast-forwards of APU-port loops */
 uint32 ps2_idle_handshake_passes = 0; /* loop passes skipped by those */
+uint32 ps2_idle_crossings = 0;        /* passes taken across an H-event without the interpreter */
 
 static bool peek(uint32 address, uint8 *out)
 {
@@ -406,6 +408,7 @@ static struct
 {
 	LoopState s;
 	int32 c, left;
+	bool cross; /* the pass runs across H-events: only the registers and the cycle count are predicted */
 } shadow;
 
 void ps2_idle_shadow_reset(void)
@@ -418,7 +421,15 @@ static void shadow_expect(int32 k, int32 c)
 	snapshot(shadow.s);
 	shadow.c = c;
 	shadow.left = k;
+	shadow.cross = false;
 	ps2_idle_shadow_checked++;
+}
+
+/* The next pass, across H-events, is predicted to end at this cycle count. */
+static void shadow_expect_cross(int32 end)
+{
+	shadow_expect(1, end - CPU.Cycles);
+	shadow.cross = true;
 }
 
 /* True when this hit was one of the predicted passes. */
@@ -429,7 +440,7 @@ static bool shadow_verify(void)
 	LoopState now;
 	snapshot(now);
 	shadow.s.cycles += shadow.c;
-	if (!same_state(shadow.s, now) || now.cycles != shadow.s.cycles)
+	if (!(shadow.cross ? same_regs(shadow.s, now) : same_state(shadow.s, now)) || now.cycles != shadow.s.cycles)
 	{
 		if (ps2_idle_shadow_wrong++ < 5)
 			fprintf(stderr, "idle shadow: wrong skip at %06x, c %d: expected cycles %d, got %06x at %d\n",
@@ -444,7 +455,65 @@ static bool shadow_verify(void)
 #else
 #define SHADOW 0
 #define shadow_expect(k, c)
+#define shadow_expect_cross(end)
 #endif
+
+/* The pass that starts here, c cycles long, runs into one or more H-events.
+ * Can it be taken without the interpreter? Yes if every event it meets
+ * leaves the CPU alone - does not write memory, raise an interrupt, or
+ * depend on the exact cycle it fires at - and the IRQ timer stays ahead:
+ *   H-blank start, and HDMA start on a line without HDMA: nothing but the
+ *     next event being scheduled;
+ *   HDMA init on any line but 0: likewise;
+ *   render: draws a scanline;
+ *   WRAM refresh: 40 cycles pass.
+ * Not the end of the scanline (APU, V counter, NMI, joypad, end of frame),
+ * HDMA start with HDMA to do, HDMA init on line 0.
+ * Follows S9xReschedule and S9xDoHEventProcessing (cpuexec.cpp).
+ * *end: the cycle count when the pass has ended. */
+static bool crossing_is_inert(int32 c, int32 *end)
+{
+	int32 at = CPU.Cycles + c, next = CPU.NextEvent;
+	int which = CPU.WhichEvent;
+	while (at >= next)
+	{
+		switch (which)
+		{
+		case HC_HBLANK_START_EVENT:
+			which = HC_HDMA_START_EVENT;
+			next = Timings.HDMAStart;
+			break;
+		case HC_HDMA_START_EVENT:
+			if (PPU.HDMA && CPU.V_Counter <= PPU.ScreenHeight)
+				return false;
+			which = HC_HCOUNTER_MAX_EVENT;
+			next = Timings.H_Max;
+			break;
+		case HC_HDMA_INIT_EVENT:
+			if (CPU.V_Counter == 0)
+				return false;
+			which = HC_RENDER_EVENT;
+			next = Timings.RenderPos;
+			break;
+		case HC_RENDER_EVENT:
+			which = HC_WRAM_REFRESH_EVENT;
+			next = Timings.WRAMRefreshPos;
+			break;
+		case HC_WRAM_REFRESH_EVENT:
+			at += SNES_WRAM_REFRESH_CYCLES;
+			which = HC_HBLANK_START_EVENT;
+			next = Timings.HBlankStart;
+			break;
+		default: /* HC_HCOUNTER_MAX_EVENT */
+			return false;
+		}
+	}
+	/* (checked between instructions: none inside the pass may see it) */
+	if (at >= Timings.NextIRQTimer)
+		return false;
+	*end = at;
+	return true;
+}
 
 void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 {
@@ -465,21 +534,48 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 
 	if (at_known_loop())
 	{
-		int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
-		/* Every skipped pass must end before the limit (events fire at
-		 * "cycles >= event"). This runs some 800 times a frame and the
-		 * R5900 takes 37 cycles to divide: multiply by the reciprocal,
-		 * rounded down - at worst one pass fewer is skipped, and that
-		 * pass is then simply executed. */
-		int32 room = limit - CPU.Cycles - 1;
-		int32 k = room > 0 ? (int32)(((uint32)room * known.recip) >> 16) : 0;
-		if (k > 0 && SHADOW)
-			shadow_expect(k, known.c);
-		else if (k > 0)
+		const int32 c = known.c;
+		for (;;)
 		{
-			ps2_idle_plain_skips++;
-			CPU.Cycles += k * known.c;
-			ps2_idle_skipped_cycles += (uint32)(k * known.c);
+			int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
+			/* Every skipped pass must end before the limit (events fire
+			 * at "cycles >= event"). This runs some 800 times a frame
+			 * and the R5900 takes 37 cycles to divide: multiply by the
+			 * reciprocal, rounded down - at worst one pass fewer is
+			 * skipped here, and it is taken below. */
+			int32 room = limit - CPU.Cycles - 1;
+			int32 k = room > 0 ? (int32)(((uint32)room * known.recip) >> 16) : 0;
+			if (k > 0 && SHADOW)
+			{
+				shadow_expect(k, c);
+				break;
+			}
+			if (k > 0)
+			{
+				ps2_idle_plain_skips++;
+				CPU.Cycles += k * c;
+				ps2_idle_skipped_cycles += (uint32)(k * c);
+			}
+
+			/* The next pass meets the event. H-events come ten to a
+			 * scanline, and most of them are nothing to the CPU: take
+			 * the pass and the events here and carry on, instead of
+			 * going back to the interpreter for one pass each time. The
+			 * loop's state is the same afterwards by the same argument
+			 * as for the passes above. */
+			int32 end;
+			if (!crossing_is_inert(c, &end))
+				break;
+			if (SHADOW)
+			{
+				shadow_expect_cross(end);
+				break;
+			}
+			ps2_idle_crossings++;
+			ps2_idle_skipped_cycles += (uint32)c;
+			CPU.Cycles += c;
+			while (CPU.Cycles >= CPU.NextEvent)
+				S9xDoHEventProcessing();
 		}
 		/* (not a pass the proof below may measure from) */
 		S9xIdleLoopLive = 0;

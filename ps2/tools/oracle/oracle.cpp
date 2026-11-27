@@ -439,8 +439,8 @@ int main(int argc, char **argv)
 	}
 #endif
 #ifdef ORACLE_IDLE_STATS
-	fprintf(stderr, "idle: plain skips %u, handshake skips %u (%u passes)\n", ps2_idle_plain_skips,
-		ps2_idle_handshake_skips, ps2_idle_handshake_passes);
+	fprintf(stderr, "idle: plain skips %u, handshake skips %u (%u passes), %u event crossings\n", ps2_idle_plain_skips,
+		ps2_idle_handshake_skips, ps2_idle_handshake_passes, ps2_idle_crossings);
 	if (ps2_idle_enabled == 2)
 		fprintf(stderr, "idle shadow: %u skips checked, %u wrong\n", ps2_idle_shadow_checked, ps2_idle_shadow_wrong);
 	fprintf(stderr, "spc700 idle: %u skips, %.1f%% of %u cycles\n", SNES::smp.ee_idle_skips,
