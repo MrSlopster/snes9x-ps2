@@ -13,6 +13,7 @@
 #include "stream.h"
 #include "conffile.h"
 #include "ps2_video.h"
+#include "ps2_spad.h"
 #include "s9x_sound_driver_audsrv.h"
 #include <errno.h>
 #include <sys/stat.h>
@@ -463,6 +464,7 @@ int main(int argc, char **argv)
 	/* The scratchpad is not part of the ELF image: clear the core state
 	 * that lives there before anything can touch it. */
 	memset((void *)SPAD_BASE, 0, SPAD_USED);
+	ps2_spad_init();
 
 	printf("\nSnes9x " VERSION " for PS2 (argv[0]=%s)\n", argc > 0 ? argv[0] : "?");
 

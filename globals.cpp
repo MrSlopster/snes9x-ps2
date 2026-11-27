@@ -4,6 +4,7 @@
    For further information, consult the LICENSE file in the root directory.
 \*****************************************************************************/
 
+#define EE_SPAD_TABLES_ORIGINALS /* PS2: this file defines the tables (cpuexec.h) */
 #include "snes9x.h"
 #include "memmap.h"
 #include "dma.h"

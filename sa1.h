@@ -79,10 +79,12 @@ extern struct SOpcodes		S9xSA1OpcodesM1X1[256];
 extern struct SOpcodes		S9xSA1OpcodesM1X0[256];
 extern struct SOpcodes		S9xSA1OpcodesM0X1[256];
 extern struct SOpcodes		S9xSA1OpcodesM0X0[256];
+#ifndef S9xOpLengthsM1X1 /* PS2: scratchpad copies, cpuexec.h */
 extern uint8				S9xOpLengthsM1X1[256];
 extern uint8				S9xOpLengthsM1X0[256];
 extern uint8				S9xOpLengthsM0X1[256];
 extern uint8				S9xOpLengthsM0X0[256];
+#endif
 
 uint8 S9xSA1GetByte (uint32);
 void S9xSA1SetByte (uint8, uint32);

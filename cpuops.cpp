@@ -3407,6 +3407,17 @@ static void Op42 (void)
 
 /* CPU-S9xOpcodes Definitions ************************************************/
 
+#if defined(_MIPS_ARCH_R5900) && !defined(SA1_OPCODES)
+/* PS2: from here on the names are the tables themselves again, not their
+ * scratchpad copies (cpuexec.h). (The SA-1 build of this file has its
+ * own names for them.) */
+#undef S9xOpcodesE1
+#undef S9xOpcodesM1X1
+#undef S9xOpcodesM1X0
+#undef S9xOpcodesM0X1
+#undef S9xOpcodesM0X0
+#endif
+
 struct SOpcodes S9xOpcodesM1X1[256] =
 {
 	{ Op00 },        { Op01E0M1 },    { Op02 },        { Op03M1 },      { Op04M1 },
