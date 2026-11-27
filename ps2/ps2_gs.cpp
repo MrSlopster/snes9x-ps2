@@ -69,6 +69,7 @@ static void stream_send(void)
 	if (qw)
 	{
 		ps2_gs_stats.bytes += qw * 16;
+		ps2_gs_stats.sends++;
 		PS2_STAGE("gs: waiting for the previous buffer's DMA");
 		dma_wait_fast();
 		FlushCache(0);
@@ -155,12 +156,14 @@ static void clut_update(void)
 		return;
 	memcpy(last, c, sizeof(last));
 	last_mode = PPU.BGMode;
+	ps2_gs_stats.clut_bands++;
 
 	for (unsigned p = 0; p < 16; p++)
 		if (!clut_valid || memcmp(shadow4[p], c + p * 16, sizeof(shadow4[p])))
 		{
 			memcpy(shadow4[p], c + p * 16, sizeof(shadow4[p]));
 			clut_small((vram->clut[0] >> 6) + p, shadow4[p], 16);
+			ps2_gs_stats.clut4++;
 			any = true;
 		}
 
@@ -171,6 +174,7 @@ static void clut_update(void)
 		{
 			memcpy(shadow2[g], c + g * 4, sizeof(shadow2[g]));
 			clut_small((vram->clut[2 + (g >> 4)] >> 6) + (g & 15), shadow2[g], 4);
+			ps2_gs_stats.clut2++;
 			any = true;
 		}
 
@@ -178,6 +182,7 @@ static void clut_update(void)
 	if (uses8 && (!clut_valid || memcmp(shadow8, c, sizeof(shadow8))))
 	{
 		memcpy(shadow8, c, sizeof(shadow8));
+		ps2_gs_stats.clut8++;
 		uint16 *img = (uint16 *)image(vram->clut[1] >> 6, 1, GS_PSM_16, 0, 0, 16, 16, 512);
 		for (unsigned i = 0; i < 256; i++)
 		{
@@ -277,6 +282,11 @@ static bool m7_valid = false;
 static bool m7_tile0_valid = false;
 
 /* Characters of map row cy, cells cx0..cx0+63, as a 512x8 image. */
+/* The character each map cell showed when it was last sent: games rewrite
+ * map rows with what is there already (F-Zero: some 500 cells a frame, of
+ * which most are unchanged), and a write alone marks the cell. */
+static uint8 m7_shown[0x4000];
+
 static void m7_upload_half_row(unsigned cy, unsigned cx0)
 {
 	uint8 *d = (uint8 *)image(vram->m7 >> 6, 1024 / 64, GS_PSM_8, (int)cx0 * 8, (int)cy * 8, 512, 8, 512 * 8);
@@ -285,6 +295,7 @@ static void m7_upload_half_row(unsigned cy, unsigned cx0)
 	{
 		const uint8 *src = Memory.VRAM + 1 + (map[c * 2] << 7);
 		uint8 *o = d + c * 8;
+		m7_shown[cy * 128 + cx0 + c] = map[c * 2];
 		for (unsigned py = 0; py < 8; py++, src += 16, o += 512)
 			for (unsigned px = 0; px < 8; px++)
 				o[px] = src[px * 2];
@@ -293,6 +304,7 @@ static void m7_upload_half_row(unsigned cy, unsigned cx0)
 
 static void m7_upload_cell(unsigned cell)
 {
+	m7_shown[cell] = Memory.VRAM[cell * 2];
 	uint8 *d = (uint8 *)image(vram->m7 >> 6, 1024 / 64, GS_PSM_8, (int)(cell & 127) * 8, (int)(cell >> 7) * 8, 8, 8, 64);
 	const uint8 *src = Memory.VRAM + 1 + (Memory.VRAM[cell * 2] << 7);
 	for (unsigned py = 0; py < 8; py++, src += 16, d += 8)
@@ -311,6 +323,7 @@ static void m7_update(void)
 	static uint16 list[2048];
 	unsigned count = 0;
 	bool all = !m7_valid;
+	ps2_gs_stats.m7_updates++;
 
 	if (!all)
 	{
@@ -323,6 +336,7 @@ static void m7_update(void)
 			}
 		if (chars)
 		{
+			ps2_gs_stats.m7_scans++;
 			if (S9xGSMode7Char[0])
 				m7_tile0_valid = false;
 			for (unsigned cell = 0; cell < 0x4000 && !all; cell++)
@@ -339,7 +353,7 @@ static void m7_update(void)
 			for (unsigned row = 0; row < 128 && !all; row++)
 				if (S9xGSMode7Row[row])
 					for (unsigned cell = row * 128; cell < row * 128 + 128; cell++)
-						if (S9xGSMode7Cell[cell])
+						if (S9xGSMode7Cell[cell] && Memory.VRAM[cell * 2] != m7_shown[cell])
 						{
 							if (count < sizeof(list) / sizeof(list[0]))
 								list[count++] = (uint16)cell;
@@ -1278,6 +1292,11 @@ void ps2_gs_log_stats(void)
 		 ps2_gs_stats.gs_bands, ps2_gs_stats.sw_bands, ps2_gs_stats.sw_reason ? ps2_gs_stats.sw_reason : "-",
 		 ps2_gs_stats.tiles, ps2_gs_stats.uploads, ps2_gs_stats.bytes, ps2_gs_stats.cmp_pixels,
 		 ps2_gs_stats.cmp_frames);
+	printf("%s\n", line);
+	ps2_net_log(line);
+	snprintf(line, sizeof(line), "GS palettes %u bands changed: %u x16 %u x4 %u x256 | mode 7 updates %u (%u map scans) | %u sends",
+		 ps2_gs_stats.clut_bands, ps2_gs_stats.clut4, ps2_gs_stats.clut2, ps2_gs_stats.clut8,
+		 ps2_gs_stats.m7_updates, ps2_gs_stats.m7_scans, ps2_gs_stats.sends);
 	printf("%s\n", line);
 	ps2_net_log(line);
 }

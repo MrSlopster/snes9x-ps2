@@ -49,6 +49,10 @@ void ps2_gs_log_stats(void);
 struct Ps2GsStats
 {
 	unsigned gs_bands, sw_bands, tiles, uploads, bytes;
+	/* palettes sent (16-, 4- and 256-colour), bands that found the
+	 * colours changed; Mode 7 map updates, of which with a scan of the
+	 * whole map for changed characters; stream buffers sent */
+	unsigned clut4, clut2, clut8, clut_bands, m7_updates, m7_scans, sends;
 	unsigned cmp_pixels, cmp_frames; /* compare mode: differing pixels, frames compared */
 	const char *sw_reason;            /* why the last software band was one */
 };
