@@ -80,6 +80,8 @@ void ps2_config_load(void)
 			ps2_gs_defer = n != 0;
 		else if (!strcmp(key, "gs_crc"))
 			ps2_gs_crc = n != 0;
+		else if (!strcmp(key, "gs_dump"))
+			ps2_gs_dump = n;
 		else if (!strcmp(key, "psamp_all"))
 			ps2_prof_sample_all = n != 0;
 		else if (!strcmp(key, "dump_frames"))

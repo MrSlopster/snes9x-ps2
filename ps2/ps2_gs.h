@@ -31,6 +31,9 @@ extern int ps2_gs_compare;
  * every 10th frame ("GSCRC"). The two together check the per-scanline
  * fixed colour, which the compare mode cannot (it switches it off). */
 extern int ps2_gs_defer, ps2_gs_crc;
+/* With gs_crc: also print every pixel of this frame number (gs_dump=N; a
+ * multiple of 10), as "GSPIX y x colours..." lines. */
+extern int ps2_gs_dump;
 
 /* Frame hooks (ps2_main.cpp). A GS frame is in the GS target and wants
  * ps2_video_present_target(); a frame that was all software is presented

@@ -212,6 +212,10 @@ bool8 S9xGSActive (void);       /* the GS renderer is on */
 /* $2132 is about to change: TRUE if the lines so far have been noted to
  * keep the old colour and the band can go on. */
 bool8 S9xGSFixedColourWrite (void);
+/* A window position ($2126-$2129) is about to change: TRUE if the windows
+ * only shape the colour window just now, which the GS renderer keeps per
+ * scanline, so that the band can go on. */
+bool8 S9xGSWindowWrite (void);
 void S9xGSBandPause (bool8);
 void S9xGSScreen (bool8 sub);   /* a screen of the band starts */
 void S9xGSSelectRenderers (void);

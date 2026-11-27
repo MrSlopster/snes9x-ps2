@@ -701,6 +701,10 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
 			case 0x2126: // WH0
 				if (Byte != Memory.FillRAM[0x2126])
 				{
+#ifdef _EE
+					/* PS2: see S9xGSWindowWrite (gfx.h) */
+					if (!S9xGSWindowWrite())
+#endif
 					FLUSH_REDRAW();
 					PPU.Window1Left = Byte;
 					PPU.RecomputeClipWindows = TRUE;
@@ -711,6 +715,10 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
 			case 0x2127: // WH1
 				if (Byte != Memory.FillRAM[0x2127])
 				{
+#ifdef _EE
+					/* PS2: see S9xGSWindowWrite (gfx.h) */
+					if (!S9xGSWindowWrite())
+#endif
 					FLUSH_REDRAW();
 					PPU.Window1Right = Byte;
 					PPU.RecomputeClipWindows = TRUE;
@@ -721,6 +729,10 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
 			case 0x2128: // WH2
 				if (Byte != Memory.FillRAM[0x2128])
 				{
+#ifdef _EE
+					/* PS2: see S9xGSWindowWrite (gfx.h) */
+					if (!S9xGSWindowWrite())
+#endif
 					FLUSH_REDRAW();
 					PPU.Window2Left = Byte;
 					PPU.RecomputeClipWindows = TRUE;
@@ -731,6 +743,10 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
 			case 0x2129: // WH3
 				if (Byte != Memory.FillRAM[0x2129])
 				{
+#ifdef _EE
+					/* PS2: see S9xGSWindowWrite (gfx.h) */
+					if (!S9xGSWindowWrite())
+#endif
 					FLUSH_REDRAW();
 					PPU.Window2Right = Byte;
 					PPU.RecomputeClipWindows = TRUE;

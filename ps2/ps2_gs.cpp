@@ -475,7 +475,7 @@ static inline unsigned rgb8(unsigned c15)
  * the old colour for the lines up to the write instead, and the two
  * places that use the colour draw it in runs. fixed_filled: lines below
  * it are noted. */
-int ps2_gs_defer = 1, ps2_gs_crc = 0;
+int ps2_gs_defer = 1, ps2_gs_crc = 0, ps2_gs_dump = 0;
 static uint16 fixed_line[SNES_HEIGHT_EXTENDED + 1];
 static int fixed_filled = 0;
 
@@ -511,6 +511,7 @@ static void fixed_rects(int y0, int y1, unsigned alpha, int abe)
 }
 
 static const char *unsupported(void);
+void S9xComputeClipWindows(void); /* clip.cpp */
 
 bool8 S9xGSFixedColourWrite(void)
 {
@@ -524,6 +525,123 @@ bool8 S9xGSFixedColourWrite(void)
 		fixed_filled = IPPU.PreviousLine;
 	fixed_fill(IPPU.CurrentLine);
 	return TRUE;
+}
+
+/* The window positions ($2126-$2129) of each scanline, the same way. HDMA
+ * moves a window every few lines for spotlights and shaped shading; when
+ * the windows mask no layer and only decide where colour math applies
+ * (F-Zero: 18 of 22 bands a frame), the band is drawn as if math applied
+ * everywhere, and before the blend the "math applies" bit of the frame
+ * buffer is cleared, line by line, where the colour window forbids it. */
+static uint32 win_line[SNES_HEIGHT_EXTENDED + 1];
+static int win_filled = 0;
+static bool cw_band = false;   /* this band is drawn that way */
+static uint8 cw_2130;          /* $2130 as the game set it, while the band is being drawn */
+
+static void win_fill(int upto) /* exclusive */
+{
+	if (upto > SNES_HEIGHT_EXTENDED + 1)
+		upto = SNES_HEIGHT_EXTENDED + 1;
+	uint32 w = (uint32)PPU.Window1Left | ((uint32)PPU.Window1Right << 8) | ((uint32)PPU.Window2Left << 16) |
+		   ((uint32)PPU.Window2Right << 24);
+	for (int y = win_filled; y < upto; y++)
+		win_line[y] = w;
+	if (upto > win_filled)
+		win_filled = upto;
+}
+
+/* The windows reach the picture through the colour window alone: no layer
+ * is masked on either screen, and the colour window does not black out
+ * the main screen. */
+static bool windows_colour_only(void)
+{
+	return !((Memory.FillRAM[0x212e] | Memory.FillRAM[0x212f]) & 0x1f) && !(Memory.FillRAM[0x2130] & 0xc0);
+}
+
+bool8 S9xGSWindowWrite(void)
+{
+	if (!enabled || !vram || !frame_open || !ps2_gs_defer || ps2_gs_compare || !IPPU.RenderThisFrame)
+		return FALSE;
+	if (!windows_colour_only() || unsupported())
+		return FALSE;
+	if (win_filled < (int)IPPU.PreviousLine)
+		win_filled = IPPU.PreviousLine;
+	win_fill(IPPU.CurrentLine);
+	return TRUE;
+}
+
+/* Is x inside the colour window of a line? (CalcWindowMask, clip.cpp) */
+static inline bool cw_inside(uint32 w, int x)
+{
+	int l1 = w & 255, r1 = (w >> 8) & 255, l2 = (w >> 16) & 255, r2 = w >> 24;
+	bool w1 = l1 <= r1 && x >= l1 && x <= r1, w2 = l2 <= r2 && x >= l2 && x <= r2;
+	if (!PPU.ClipWindow1Enable[5])
+		return PPU.ClipWindow2Enable[5] ? (PPU.ClipWindow2Inside[5] ? w2 : !w2) : false;
+	if (!PPU.ClipWindow2Enable[5])
+		return PPU.ClipWindow1Inside[5] ? w1 : !w1;
+	if (!PPU.ClipWindow1Inside[5])
+		w1 = !w1;
+	if (!PPU.ClipWindow2Inside[5])
+		w2 = !w2;
+	switch (PPU.ClipWindowOverlapLogic[5])
+	{
+	case 0: return w1 || w2;
+	case 1: return w1 && w2;
+	case 2: return w1 != w2;
+	default: return w1 == w2;
+	}
+}
+
+static void flat_rect(int x0, int y0, int x1, int y1, unsigned z, unsigned rgb, unsigned alpha, int abe);
+
+/* Clear the "math applies" bit where the colour window forbids math. */
+static void cw_mask(void)
+{
+	const bool forbid_inside = (cw_2130 & 0x30) == 0x20; /* else: outside */
+	u64 *p = ad(4);
+	AD(p, GS_SET_FRAME(vram->target >> 11, 512 / 64, GS_PSM_16, 0x00FFFFFF), GS_REG_FRAME); /* alpha only */
+	AD(p, GS_SET_ZBUF(vram->z >> 11, GS_PSMZ_16 & 0xf, 1), GS_REG_ZBUF);
+	AD(p, GS_SET_SCISSOR(0, 255, GFX.StartY, GFX.EndY), GS_REG_SCISSOR);
+	AD(p, GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTST_ALWAYS), GS_REG_TEST);
+	z_test = -1;
+
+	for (int y = GFX.StartY; y <= (int)GFX.EndY;)
+	{
+		uint32 w = win_line[y];
+		int e = y + 1;
+		while (e <= (int)GFX.EndY && win_line[e] == w)
+			e++;
+
+		/* The line falls into at most five stretches, at the windows'
+		 * edges. */
+		int edge[6] = { 0, (int)(w & 255), (int)((w >> 8) & 255) + 1, (int)((w >> 16) & 255), (int)(w >> 24) + 1, 256 };
+		for (int i = 1; i < 5; i++)
+			for (int j = i + 1; j < 5; j++)
+				if (edge[j] < edge[i])
+				{
+					int t = edge[i];
+					edge[i] = edge[j];
+					edge[j] = t;
+				}
+		int from = -1;
+		for (int i = 0; i < 5; i++)
+		{
+			bool forbid = edge[i] < edge[i + 1] && cw_inside(w, edge[i]) == forbid_inside;
+			if (forbid && from < 0)
+				from = edge[i];
+			if (from >= 0 && (!forbid && edge[i] < edge[i + 1]))
+			{
+				flat_rect(from, y, edge[i], e, 0, 0, 0, 0);
+				from = -1;
+			}
+		}
+		if (from >= 0)
+			flat_rect(from, y, 256, e, 0, 0, 0, 0);
+		y = e;
+	}
+
+	p = ad(1);
+	AD(p, GS_SET_FRAME(vram->target >> 11, 512 / 64, GS_PSM_16, 0), GS_REG_FRAME);
 }
 
 static void flat_rect(int x0, int y0, int x1, int y1, unsigned z, unsigned rgb, unsigned alpha, int abe)
@@ -995,6 +1113,22 @@ bool8 S9xGSBandBegin(void)
 	if (fixed_filled < (int)GFX.StartY)
 		fixed_filled = GFX.StartY;
 	fixed_fill(GFX.EndY + 1);
+	if (win_filled < (int)GFX.StartY)
+		win_filled = GFX.StartY;
+	win_fill(GFX.EndY + 1);
+	/* A colour window that forbids math on one side, and nothing else
+	 * done with the windows: draw the band without it (the core then has
+	 * nothing to clip) and apply it at the end, per line. */
+	cw_band = false;
+	if (ps2_gs_defer && !ps2_gs_compare && windows_colour_only() &&
+	    ((Memory.FillRAM[0x2130] & 0x30) == 0x10 || (Memory.FillRAM[0x2130] & 0x30) == 0x20) &&
+	    (Memory.FillRAM[0x2131] & 0x3f))
+	{
+		cw_band = true;
+		cw_2130 = Memory.FillRAM[0x2130];
+		Memory.FillRAM[0x2130] &= ~0x30;
+		S9xComputeClipWindows();
+	}
 	band_active = true;
 	sub_drawn = false;
 	in_obj = false;
@@ -1064,9 +1198,20 @@ static void band_math(void)
 
 void S9xGSBandEnd(void)
 {
+	if (cw_band)
+	{
+		Memory.FillRAM[0x2130] = cw_2130;
+		PPU.RecomputeClipWindows = TRUE;
+	}
 	if (!band_active)
+	{
+		cw_band = false;
 		return;
+	}
 	run_close();
+	if (cw_band)
+		cw_mask();
+	cw_band = false;
 	band_math();
 	band_active = false;
 }
@@ -1172,6 +1317,7 @@ void ps2_gs_frame_begin(bool overlay)
 	static int generation = -1;
 	frame_open = enabled && (vram = ps2_video_gs_vram()) != NULL;
 	fixed_filled = 0;
+	win_filled = 0;
 	if (frame_open && vram->generation != generation)
 	{
 		/* GS memory was laid out again (video mode change): all gone. */
@@ -1310,10 +1456,22 @@ static void picture_crc(int height)
 	for (int y = 0; y < height; y++)
 		for (int x = 0; x < 256; x++)
 			h = (h ^ (back[y * 512 + x] & 0x7fff)) * 16777619u;
-	char line[80];
+	char line[240];
 	snprintf(line, sizeof(line), "GSCRC %u %08x", (unsigned)IPPU.TotalEmulatedFrames, (unsigned)h);
 	printf("%s\n", line);
 	ps2_net_log(line);
+	if (ps2_gs_dump && (unsigned)IPPU.TotalEmulatedFrames == (unsigned)ps2_gs_dump)
+	{
+		/* Every pixel of this one frame, 48 to a line. */
+		for (int y = 0; y < height; y++)
+			for (int x = 0; x < 256; x += 48)
+			{
+				int n = snprintf(line, sizeof(line), "GSPIX %d %d", y, x);
+				for (int i = x; i < x + 48 && i < 256; i++)
+					n += snprintf(line + n, sizeof(line) - n, " %04x", back[y * 512 + i] & 0x7fff);
+				printf("%s\n", line);
+			}
+	}
 }
 
 static bool frame_is_gs = false;
