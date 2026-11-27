@@ -27,6 +27,10 @@ EE_LDFLAGS += -Wl,--defsym,Registers=0x70000000 -Wl,--defsym,ICPU=0x70000020 \
 	-Wl,--defsym,OpenBus=0x700000e0
 
 # Profiler hooks on core functions (ps2_prof.cpp), mangled C++ names.
+# Stay below 0x01ee8000: ps2link keeps its EE part in the top 1.1 MB of
+# RAM (linkfile.loadhigh), and the SDK's default puts the stack there. With
+# the stack on top of it, "ps2client reset" left ps2link half alive.
+EE_LDFLAGS += -Wl,--defsym,_stack=0x01ec8000
 EE_LDFLAGS += -Wl,--wrap=_Z17S9xAPUEndScanlinev -Wl,--wrap=_Z14S9xAPUReadPorti \
 	-Wl,--wrap=_Z15S9xAPUWritePortih -Wl,--wrap=_Z15S9xUpdateScreenv \
 	-Wl,--wrap=_Z19S9xEndScreenRefreshv
