@@ -999,6 +999,11 @@ bool8 S9xGSCompareMode(void)
 	return enabled && ps2_gs_compare;
 }
 
+bool8 S9xGSActive(void)
+{
+	return enabled;
+}
+
 void S9xGSBandPause(bool8 pause)
 {
 	band_active = !pause;
@@ -1128,6 +1133,7 @@ static void compare(int width, int height)
 
 	stream_send();
 	dma_wait_fast();
+	ps2_video_settle();
 	PS2_STAGE("gs: reading the picture back");
 	if (!ps2_screenshot(back, (unsigned)(vram->target >> 6), 0, 0, 512, 240, GS_PSM_16))
 		return;
@@ -1225,9 +1231,8 @@ void ps2_gs_frame_end(int width, int height)
 			overlay_strip(height - OVERLAY_BOTTOM, height);
 	}
 
+	/* (ps2_video_present_target waits for this before it sends) */
 	stream_send();
-	PS2_STAGE("gs: waiting for the frame's last DMA");
-	dma_wait_fast();
 	PS2_STAGE("gs: frame sent");
 }
 

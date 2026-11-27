@@ -60,6 +60,8 @@ void ps2_video_set_gs_layout(int on); /* re-lays out VRAM, clears the screen */
 const Ps2GsVram *ps2_video_gs_vram(void); /* NULL unless the layout is on */
 /* Show the top-left width x height of the target as the next frame. */
 void ps2_video_present_target(int width, int height);
+/* Wait until a frame presented that way has been drawn completely. */
+void ps2_video_settle(void);
 
 /* Draw a solid test colour: lets a TV (no ps2link) tell init/boot failure
  * states apart once the GS is initialized early at boot. */

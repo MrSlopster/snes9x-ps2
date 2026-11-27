@@ -58,6 +58,7 @@ bool8 S9xGSBandBegin(void) { return FALSE; }
 void S9xGSBandEnd(void) {}
 void S9xGSBandSoftware(void) {}
 bool8 S9xGSCompareMode(void) { return FALSE; }
+bool8 S9xGSActive(void) { return FALSE; }
 void S9xGSBandPause(bool8) {}
 void S9xGSScreen(bool8) {}
 void S9xGSSelectRenderers(void) {}

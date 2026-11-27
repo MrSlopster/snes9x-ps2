@@ -143,6 +143,20 @@ void S9xGraphicsScreenResize (void)
 	}
 }
 
+#ifdef _EE
+static bool8 GSZClearPending = FALSE;
+
+static void EEClearZBuffers (void)
+{
+	uint32 rows = IPPU.RenderedScreenHeight + 1;
+	if (rows > MAX_SNES_HEIGHT)
+		rows = MAX_SNES_HEIGHT;
+	memset(GFX.ZBuffer, 0, GFX.RealPPL * rows);
+	memset(GFX.SubZBuffer, 0, GFX.RealPPL * rows);
+	GSZClearPending = FALSE;
+}
+#endif
+
 void S9xBuildDirectColourMaps (void)
 {
 	IPPU.XB = mul_brightness[PPU.Brightness];
@@ -180,14 +194,14 @@ void S9xStartScreenRefresh (void)
 		/* PS2 port: clear only the rows this frame renders (RealPPL pitch,
 		 * both interlace fields included in RenderedScreenHeight) rather
 		 * than the whole 512x478 buffers: ~115 KB instead of ~490 KB of
-		 * memset per frame through the EE's 8 KB data cache. */
-		{
-			uint32 rows = IPPU.RenderedScreenHeight + 1;
-			if (rows > MAX_SNES_HEIGHT)
-				rows = MAX_SNES_HEIGHT;
-			memset(GFX.ZBuffer, 0, GFX.RealPPL * rows);
-			memset(GFX.SubZBuffer, 0, GFX.RealPPL * rows);
-		}
+		 * memset per frame through the EE's 8 KB data cache.
+		 * And not at all while the GS draws the picture (it has its own
+		 * Z buffer): the clear then waits for the first band of the frame
+		 * that is rendered in software, if there is one. */
+		if (S9xGSActive())
+			GSZClearPending = TRUE;
+		else
+			EEClearZBuffers();
 #else
 		memset(GFX.ZBuffer, 0, GFX.ScreenSize);
 		memset(GFX.SubZBuffer, 0, GFX.ScreenSize);
@@ -525,6 +539,8 @@ void S9xUpdateScreen (void)
 		 * band is drawn here as usual and uploaded at the end of the
 		 * frame. */
 		bool8 gs_band = S9xGSBandBegin();
+		if (GSZClearPending && (!gs_band || S9xGSCompareMode()))
+			EEClearZBuffers();
 		for (int pass = (gs_band && S9xGSCompareMode()) ? 0 : 1; pass < 2; pass++)
 		{
 			if (gs_band)

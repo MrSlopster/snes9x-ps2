@@ -95,12 +95,25 @@ static int video_ready = 0;
 static u64 dispfb1[2], dispfb2[2];
 static volatile int displayed = 0;
 static volatile int pending = -1;
+/* A GS-rendered frame whose final stretch into this display buffer has
+ * been sent but not waited for: the vblank handler makes it 'pending' once
+ * the GS has signalled FINISH. The main thread used to spin until then,
+ * about a millisecond per frame. */
+static volatile int awaiting = -1;
 static int vsync_id = -1;
 
 static s32 vblank_flip(s32 cause)
 {
 	(void)cause;
 	ps2_watchdog_vblank();
+
+	int a = awaiting;
+	if (a >= 0 && (*GS_REG_CSR & 2))
+	{
+		*GS_REG_CSR = 2; /* acknowledge FINISH */
+		awaiting = -1;
+		pending = a;
+	}
 
 	int p = pending;
 	if (p >= 0)
@@ -119,10 +132,39 @@ static s32 vblank_flip(s32 cause)
 /* Pick the buffer to draw into. If a finished frame has not been shown yet
  * (emulation outpacing the display, e.g. NTSC game on a 50 Hz console),
  * take it back and overwrite it: never draw into the scanned-out buffer. */
+/* Bring a frame that is still on its way to the same point as one that
+ * was waited for: everything sent has been drawn, FINISH is acknowledged.
+ * Needed before anything else that uses the FINISH signal or the packet. */
+void ps2_video_settle(void)
+{
+	if (awaiting < 0)
+		return;
+	dma_wait_fast();
+	for (;;)
+	{
+		DIntr();
+		if (awaiting < 0)
+		{
+			EIntr();
+			break; /* the vblank handler got there first */
+		}
+		if (*GS_REG_CSR & 2)
+		{
+			*GS_REG_CSR = 2;
+			pending = awaiting;
+			awaiting = -1;
+			EIntr();
+			break;
+		}
+		EIntr();
+	}
+}
+
 static int acquire_back_buffer(void)
 {
 	int target;
 
+	ps2_video_settle();
 	DIntr();
 	if (pending >= 0)
 	{
@@ -247,6 +289,7 @@ static void apply_mode(int mode)
 {
 	const ModeSpec &m = mode_specs[resolve_mode(mode)];
 
+	ps2_video_settle();
 	DIntr();
 	pending = -1;
 	EIntr();
@@ -372,6 +415,7 @@ void ps2_video_set_filter(int filter)
 
 void ps2_video_deinit(void)
 {
+	ps2_video_settle();
 	video_ready = 0;
 	if (vsync_id >= 0)
 	{
@@ -513,16 +557,16 @@ void ps2_video_present_target(int width, int height)
 	int target = acquire_back_buffer();
 	qword_t *q = present_commands(frame_packet->data, target, width, height);
 
+	/* The GS renderer's last buffer goes first. */
+	PS2_STAGE("present: waiting for DMA");
+	dma_wait_fast();
 	FlushCache(0);
 	PS2_STAGE("present: sending");
 	dma_channel_send_normal(DMA_CHANNEL_GIF, frame_packet->data, q - frame_packet->data, 0, 0);
-	PS2_STAGE("present: waiting for DMA");
-	dma_wait_fast();
-	PS2_STAGE("present: waiting for the GS to finish");
-	draw_wait_finish();
 	PS2_STAGE("present: done");
 
-	present(target);
+	/* Not waited for: see 'awaiting'. */
+	awaiting = target;
 }
 
 /* Stretch the top-left width x height of the SNES texture over a display

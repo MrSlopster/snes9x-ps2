@@ -208,6 +208,7 @@ bool8 S9xGSBandBegin (void);    /* TRUE: the GS draws this band */
 void S9xGSBandEnd (void);
 void S9xGSBandSoftware (void);  /* the band was drawn in software */
 bool8 S9xGSCompareMode (void);  /* draw GS bands in software as well */
+bool8 S9xGSActive (void);       /* the GS renderer is on */
 void S9xGSBandPause (bool8);
 void S9xGSScreen (bool8 sub);   /* a screen of the band starts */
 void S9xGSSelectRenderers (void);
