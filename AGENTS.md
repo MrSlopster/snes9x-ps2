@@ -70,6 +70,27 @@ and embedded in the ELF.
   sample profile, and several plausible micro-optimisations measured as
   losses.
 
+## What the console's counters say (F-Zero demo race, 2026-11-27)
+
+Measured over ps2link with `show_fps=3` (PMC lines) and `psamp_all=1`
+(every PC-sample bucket), 65816 bucket only, per frame:
+
+- 1.75 M instructions in 1.03 M issue cycles, but 2.7 M cycles elapse:
+  about 60% of the 65816's time is stalls.
+- 18 k instruction-cache and 13 k data-cache misses. Taking out branch
+  costs, a miss costs roughly 45-50 cycles, so 1 k misses is about
+  0.16 ms. Misses, not instruction count, are what to optimise.
+- The hot code is not small: 169 opcode handlers (19 KB touched, spread
+  over 176 KB), 8 KB of memory-access and PPU-register code, and the
+  SPC700 loop touches 19 KB of its 61 KB by itself. 80% of busy samples
+  need 22 KB of code; the cache holds 16.
+- Tried and measured, none a reliable win: the opcode handlers at `-O2`
+  (9.42 ms against 9.34 at `-O3`) and `-Os` (9.70 ms, with 10% fewer
+  I-cache misses); linking the hot functions first in sample order
+  (9.14 ms with every sampled function listed, 9.43 ms with only the
+  hottest 94). Layout changes move the result by +-0.15 ms either way, so
+  a change smaller than that proves nothing.
+
 ## Where things are
 
 | Area | Files |
