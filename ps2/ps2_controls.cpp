@@ -125,6 +125,12 @@ void ps2_input_poll(void)
     for (int port = 0; port < 2; port++)
     {
         int state = padGetState(port, 0);
+        if (state == PAD_STATE_DISCONN)
+        {
+            /* Unplugged: nothing is held any more (libpad is active-low). */
+            report_port(port, 0xFFFF);
+            continue;
+        }
         if (state != PAD_STATE_STABLE && state != PAD_STATE_FINDCTP1)
         {
             /* Keep the last reported state while the pad is being found. */

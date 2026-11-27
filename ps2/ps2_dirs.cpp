@@ -23,6 +23,7 @@
 #include <strings.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #include "ps2_dirs.h"
 #include "snes9x.h"
@@ -177,18 +178,120 @@ const char *ps2_save_dir(void)
 	return dir.c_str();
 }
 
+/* Battery saves are written to "<name>.sr~" first and only then put in
+ * place of "<name>.srm" (ps2_sram_save), so that a reset or power cut in
+ * the middle of a write cannot leave the game with a truncated save. */
+static std::string sram_spare(const std::string &path)
+{
+	std::string spare = path;
+	spare[spare.size() - 1] = '~';
+	return spare;
+}
+
+static long file_size(const std::string &path)
+{
+	struct stat st;
+	return stat(path.c_str(), &st) == 0 ? (long)st.st_size : -1;
+}
+
+/* Of a save and its spare copy, the one to load; empty if neither is
+ * there. The spare is complete before the save itself is touched, so
+ * whenever it is at least as long, it is the same save or a newer one;
+ * a spare cut off in mid-write is shorter. */
+static std::string sram_pick(const std::string &path)
+{
+	long size = file_size(path), spare_size = file_size(sram_spare(path));
+	if (spare_size > 0 && spare_size >= size)
+		return sram_spare(path);
+	return size >= 0 ? path : std::string();
+}
+
 std::string ps2_sram_load_path(void)
 {
 	/* Where it would be saved; failing that, a copy next to the ROM (put
-	 * there from a PC, say) on a device that cannot be written. */
+	 * there from a PC, say) on a device that cannot be written; failing
+	 * that, <data base>/srm, where every save went before saves moved
+	 * next to the ROM. */
 	std::string path = S9xGetFilename(".srm", SRAM_DIR);
-	struct stat st;
-	if (stat(path.c_str(), &st) == 0)
-		return path;
-	std::string beside = S9xGetFilename(".srm", ROMFILENAME_DIR);
-	if (stat(beside.c_str(), &st) == 0)
-		return beside;
+	std::string candidates[3] = { path, S9xGetFilename(".srm", ROMFILENAME_DIR),
+				      std::string(base_dir) + "/srm/" + S9xBasenameNoExt(Memory.ROMFilename) + ".srm" };
+	for (int i = 0; i < 3; i++)
+	{
+		std::string found = sram_pick(candidates[i]);
+		if (!found.empty())
+			return found;
+	}
 	return path;
+}
+
+/* Bytes of battery RAM that CMemory::SaveSRAM writes; 0: none. */
+static int sram_bytes(void)
+{
+	if ((Settings.SuperFX && Memory.ROMType < 0x15) || (Settings.SA1 && Memory.ROMType == 0x34))
+		return 0;
+	int size = Memory.SRAMSize ? (1 << (Memory.SRAMSize + 3)) * 128 : 0;
+	if (Memory.LoROM)
+		size = size < 0x70000 ? size : 0x70000;
+	else if (Memory.HiROM)
+		size = size < 0x40000 ? size : 0x40000;
+	return size;
+}
+
+/* Write the save file and read it back: the core's own writer does not
+ * report a failed write. */
+static bool sram_write(const std::string &path, int size)
+{
+	if (!Memory.SaveSRAM(path.c_str()))
+		return false;
+	FILE *f = fopen(path.c_str(), "rb");
+	if (!f)
+		return false;
+	bool same = true;
+	uint8 buf[1024];
+	for (int pos = 0; pos < size && same; pos += (int)sizeof(buf))
+	{
+		int n = size - pos < (int)sizeof(buf) ? size - pos : (int)sizeof(buf);
+		same = fread(buf, 1, n, f) == (size_t)n && !memcmp(buf, Memory.SRAM + pos, n);
+	}
+	fclose(f);
+	return same;
+}
+
+bool ps2_sram_save(int *err)
+{
+	*err = 0;
+	int size = sram_bytes();
+	std::string path = S9xGetFilename(".srm", SRAM_DIR), spare = sram_spare(path);
+	if (!size)
+	{
+		/* (no battery RAM of the cartridge's own; the core may still
+		 * have a sub-cartridge's to write) */
+		Memory.SaveSRAM(path.c_str());
+		return true;
+	}
+	errno = 0;
+	if (!sram_write(spare, size))
+	{
+		/* The save in place is untouched. */
+		*err = errno;
+		remove(spare.c_str());
+		return false;
+	}
+
+	remove(path.c_str());
+	if (rename(spare.c_str(), path.c_str()) == 0 && file_size(path) == size)
+		return true;
+
+	/* No rename on this device: write in place. The spare stays until
+	 * that has worked, and is what gets loaded if it has not. */
+	errno = 0;
+	if (!sram_write(path, size))
+	{
+		*err = errno;
+		return false;
+	}
+	remove(spare.c_str());
+	return true;
 }
 
 static const char *rom_exts[] = { ".sfc", ".smc", ".zip", ".jma", ".bin", ".fig", ".swc", NULL };

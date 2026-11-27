@@ -70,8 +70,10 @@ static int cur_filter = PS2_FILTER_SMOOTH;
 #define TEX_MAX_H 480
 
 /* Chain budget: 7 header qwords + one REF per row + tail (TEXFLUSH/FRAME
- * 3, sprite 4, finish 2, END tag 1). */
-#define FRAME_PACKET_QW (8 + TEX_MAX_H + 16)
+ * 3, sprite 4, finish 2, END tag 1; the GS layout's present_commands
+ * adds ten register writes), with room to spare: a 478-row frame came to
+ * 505 qwords when this was 8 + rows + 16. */
+#define FRAME_PACKET_QW (8 + TEX_MAX_H + 64)
 
 /* GS renderer layout (ps2_gs.cpp): the SNES frame is drawn by the GS into
  * the texture the software path uploads to, and the rest of VRAM holds

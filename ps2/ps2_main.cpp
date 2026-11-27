@@ -21,6 +21,7 @@
 #include "ps2_gs.h"
 #include "ps2_watchdog.h"
 
+#include "display.h"
 #include "ps2_dirs.h"
 #include "ps2_controls.h"
 #include "ps2_iop.h"
@@ -245,21 +246,19 @@ void S9xSyncSpeed(void)
 	bool late = lead < 0;
 
 	/* AUTO_FRAMERATE: render everything when there is spare time,
-	 * otherwise render 1-in-10 while catching up (unix logic). */
-	unsigned limit = (Settings.SkipFrames == AUTO_FRAMERATE)
-				 ? (late ? 10 : 1)
-				 : (unsigned)Settings.SkipFrames;
-
-	IPPU.RenderThisFrame = (++IPPU.SkippedFrames >= limit) ? TRUE : FALSE;
-
-	if (IPPU.RenderThisFrame)
-		IPPU.SkippedFrames = 0;
-	else if (late && (uint32)(-lead) >= ee_hz / 2)
+	 * otherwise render 1-in-10 while catching up (unix logic). (A fixed
+	 * frame skip was applied above.) */
+	if (Settings.SkipFrames == AUTO_FRAMERATE)
 	{
-		/* Half a second behind means a pause happened; resync instead
-		 * of fast-forwarding. */
-		next = now;
+		IPPU.RenderThisFrame = (++IPPU.SkippedFrames >= (late ? 10u : 1u)) ? TRUE : FALSE;
+		if (IPPU.RenderThisFrame)
+			IPPU.SkippedFrames = 0;
 	}
+
+	/* Half a second behind means a pause happened (menu, state load,
+	 * another ROM); resync instead of fast-forwarding. */
+	if (late && (uint32)(-lead) >= ee_hz / 2)
+		next = now;
 
 	/* Wait for this frame's target time. */
 	{
@@ -284,9 +283,8 @@ void S9xAutoSaveSRAM(void)
 	printf("%s\n", line.c_str());
 	ps2_net_log(line.c_str());
 	PS2_STAGE("SRAM autosave (file write)");
-	errno = 0;
-	bool8 ok = Memory.SaveSRAM(path.c_str());
-	int err = errno;
+	int err;
+	bool ok = ps2_sram_save(&err);
 	PS2_STAGE("SRAM autosave done");
 	if (ok)
 	{
@@ -294,7 +292,10 @@ void S9xAutoSaveSRAM(void)
 		ps2_net_log("SRAM autosave: written");
 	}
 	else
+	{
 		ps2_log_storage("SRAM autosave FAILED", err);
+		S9xSetInfoString("SAVE FAILED - game progress is not being saved");
+	}
 }
 
 /* One log line about where settings and saves go. */
@@ -619,7 +620,10 @@ int main(int argc, char **argv)
 	}
 
 	printf("Saving SRAM: %s\n", S9xGetFilename(".srm", SRAM_DIR).c_str());
-	Memory.SaveSRAM(S9xGetFilename(".srm", SRAM_DIR).c_str());
+	int save_err;
+	bool saved = ps2_sram_save(&save_err);
+	if (!saved)
+		ps2_log_storage("SRAM save FAILED", save_err);
 
 	if (!load_other)
 		break;
@@ -629,7 +633,7 @@ int main(int argc, char **argv)
 	ps2_sound_pause();
 	start_dir = Memory.ROMFilename.substr(0, Memory.ROMFilename.rfind('/') + 1);
 	failed_name = Memory.ROMFilename.substr(Memory.ROMFilename.rfind('/') + 1);
-	load_error.clear();
+	load_error = saved ? std::string() : "Could not write the save of " + failed_name;
 	rom_path.clear();
 	} /* game session */
 

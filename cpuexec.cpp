@@ -63,6 +63,10 @@ void S9xMainLoop (void)
 				      (uint32)(CPU.Cycles >= Timings.NextIRQTimer);
 			if (__builtin_expect(slow == 0, 1))
 				goto dispatch;
+			/* Something other than the next instruction is about to
+			 * happen: ends a chain of idle-loop passes (ps2_idle.cpp). */
+			extern uint8 S9xIdleLoopLive;
+			S9xIdleLoopLive = 0;
 		}
 #endif
 		if (CPU.NMIPending)

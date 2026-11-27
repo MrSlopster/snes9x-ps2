@@ -296,7 +296,8 @@ bool ps2_net_ready(void)
 
 void ps2_net_log(const char *line)
 {
-	if (!ready)
+	/* (the network cannot be shut down again; "off" stops the sending) */
+	if (!ready || !ps2_cfg.netlog)
 		return;
 	sendto(sock, line, strlen(line), 0, (struct sockaddr *)&dest, sizeof(dest));
 }

@@ -12,6 +12,16 @@
  *    and no SA-1 / SuperFX (they share RAM with the CPU).
  *  - Two consecutive passes with identical registers, flags and OpenBus,
  *    inside the same event window, give the exact iteration cost c.
+ *    "Consecutive" is not implied by the two snapshots being equal (the
+ *    last pass of one frame and the first of the next look the same, with
+ *    an NMI and a frame of work between them), so it is established
+ *    separately: the body is decoded (straight-line code, no writes) and
+ *    the hit before must have been reached through that same code - which
+ *    is given for ROM, and for RAM means it was decoded there as well -
+ *    without the chain being broken in between. The chain
+ *    (S9xIdleLoopLive) is cut by the two ways out of such a body: its
+ *    branch not being taken (cpumacro.h) and anything the main loop does
+ *    between instructions - NMI, IRQ, ... (cpuexec.cpp).
  *  - Whole iterations are then skipped: Cycles += k * c, every one of them
  *    ending before the next H-event and the IRQ timer (NMI is raised by an
  *    H-event). Until then nothing can change what the loop reads, and
@@ -153,29 +163,47 @@ static int classify_body(uint16 target, uint16 branch_start)
 	return port_reads == 1 ? LOOP_HANDSHAKE : LOOP_IMPURE;
 }
 
-/* Purity verdicts, direct-mapped by loop address; operand addresses
- * depend on D and DB, so they are part of the key. */
-struct PurityEntry
+/* Verdicts, direct-mapped by loop address. A verdict follows from the
+ * code bytes, D and DB (operand addresses), the flags (operand sizes) and
+ * the memory map, so the first three are part of the entry and the cache
+ * is emptied when the map may have changed (S9xIdleLoopReset; BS-X
+ * cartridges, which remap while running, are not cached). An "impure"
+ * verdict is not checked against the code: a stale one only loses a skip,
+ * and polling loops on I/O registers ask on every pass. */
+struct KindEntry
 {
 	uint32 pbpc;
-	uint16 d;
+	uint16 d, p;
 	uint8 db;
-	uint8 state; /* 0 empty, else LOOP_* */
+	uint8 kind; /* 0 empty, else LOOP_* */
+	uint8 len;
+	uint8 code[16];
 };
-static PurityEntry purity_cache[256];
+static KindEntry kind_cache[256];
 
-static int loop_kind(uint16 target, uint16 after_branch)
+/* code: the len bytes from the branch target to the end of the branch.
+ * (Code in ROM is what it was when the entry was made; only code in RAM
+ * is compared.) */
+static int loop_kind(uint16 target, uint16 after_branch, const uint8 *code, unsigned len, bool in_rom)
 {
 	uint32 pbpc = Registers.PBPC;
-	PurityEntry &e = purity_cache[(pbpc ^ (pbpc >> 8)) & 255];
-	if (e.state && e.pbpc == pbpc && e.d == Registers.D.W && e.db == Registers.DB)
-		return e.state;
+	KindEntry &e = kind_cache[(pbpc ^ (pbpc >> 8)) & 255];
+	if (e.kind && e.pbpc == pbpc && e.d == Registers.D.W && e.db == Registers.DB &&
+	    (e.kind == LOOP_IMPURE ||
+	     (e.p == Registers.P.W && e.len == len && (in_rom || !memcmp(e.code, code, len)))))
+		return e.kind;
 
 	int kind = classify_body(target, (uint16)(after_branch - 2));
-	e.pbpc = pbpc;
-	e.d = Registers.D.W;
-	e.db = Registers.DB;
-	e.state = (uint8)kind;
+	if (!Settings.BS)
+	{
+		e.pbpc = pbpc;
+		e.d = Registers.D.W;
+		e.p = Registers.P.W;
+		e.db = Registers.DB;
+		e.kind = (uint8)kind;
+		e.len = (uint8)len;
+		memcpy(e.code, code, len);
+	}
 	return kind;
 }
 
@@ -187,10 +215,18 @@ struct LoopState
 	uint8 which_event;
 	uint16 a, x, y, d, s, p;
 	uint8 db, carry, zero, negative, overflow, open_bus;
-	bool valid;
 };
 
+/* The previous hit of the hook: its state, and, if the loop body was
+ * decoded there, the verdict and (for code in RAM) the code itself. */
 static LoopState last;
+static uint8 last_kind; /* 0: not decoded */
+static uint8 last_len;
+static uint8 last_code[16];
+
+/* Non-zero while nothing but straight-line code can have run since that
+ * hit. Cleared from the core: see the top of this file. */
+uint8 S9xIdleLoopLive = 0;
 
 static void snapshot(LoopState &s)
 {
@@ -212,12 +248,19 @@ static void snapshot(LoopState &s)
 	s.open_bus = OpenBus;
 }
 
-static bool same_state(const LoopState &a, const LoopState &b)
+/* Everything but the position in time. */
+static bool same_regs(const LoopState &a, const LoopState &b)
 {
-	return a.pbpc == b.pbpc && a.next_event == b.next_event && a.which_event == b.which_event &&
+	return a.pbpc == b.pbpc &&
 	       a.a == b.a && a.x == b.x && a.y == b.y && a.d == b.d && a.s == b.s && a.p == b.p &&
 	       a.db == b.db && a.carry == b.carry && a.zero == b.zero && a.negative == b.negative &&
 	       a.overflow == b.overflow && a.open_bus == b.open_bus;
+}
+
+/* ... and no H-event in between. */
+static bool same_state(const LoopState &a, const LoopState &b)
+{
+	return a.next_event == b.next_event && a.which_event == b.which_event && same_regs(a, b);
 }
 
 /* The last plain idle loop that was proven (two identical passes in one
@@ -255,6 +298,8 @@ static void remember_loop(uint16 target, uint16 after_branch, const LoopState &s
 	known.valid = false;
 	if (CheckEmulation())
 		return; /* direct page wraps differently */
+	if (Settings.BS)
+		return; /* remaps memory while running */
 
 	uint32 pb = ICPU.ShiftedPB;
 	unsigned len = (uint16)(after_branch - target);
@@ -310,31 +355,107 @@ static void remember_loop(uint16 target, uint16 after_branch, const LoopState &s
 	known.valid = true;
 }
 
+/* The CPU is in this recorded state (but for the position in time)? The
+ * fields most likely to differ come first. */
+static inline bool at_state(const LoopState &k)
+{
+	return Registers.PBPC == k.pbpc && Registers.X.W == k.x && Registers.Y.W == k.y && Registers.A.W == k.a &&
+	       Registers.P.W == k.p && Registers.S.W == k.s && Registers.D.W == k.d && Registers.DB == k.db &&
+	       ICPU._Carry == k.carry && ICPU._Zero == k.zero && ICPU._Negative == k.negative &&
+	       ICPU._Overflow == k.overflow && OpenBus == k.open_bus;
+}
+
 /* At the branch of the remembered loop, in the proven state? */
 static inline bool at_known_loop(void)
 {
-	const LoopState &k = known.s;
-	if (!known.valid || Registers.PBPC != k.pbpc || Registers.A.W != k.a || Registers.X.W != k.x ||
-	    Registers.Y.W != k.y || Registers.P.W != k.p || Registers.S.W != k.s || Registers.D.W != k.d ||
-	    Registers.DB != k.db || ICPU._Carry != k.carry || ICPU._Zero != k.zero || ICPU._Negative != k.negative ||
-	    ICPU._Overflow != k.overflow || OpenBus != k.open_bus || CPU.FastROMSpeed != known.fast_rom_speed)
+	if (!known.valid || !at_state(known.s) || CPU.FastROMSpeed != known.fast_rom_speed)
 		return false;
+	/* (The pointers are as good as the addresses while the memory map
+	 * stands: see S9xIdleLoopReset and remember_loop. Looking each one up
+	 * again here, 800 times a frame, cost 5% of the 65816's time.) */
 	for (unsigned i = 0; i < known.nbytes; i++)
 		if (*known.byte_ptr[i] != known.byte_val[i])
 			return false;
 	return memcmp(known.code_ptr, known.code, known.code_len) == 0;
 }
 
+/* Reset, ROM load, state load: nothing remembered applies any more. */
+void S9xIdleLoopReset(void)
+{
+	S9xIdleLoopLive = 0;
+	last_kind = 0;
+	known.valid = false;
+	memset(kind_cache, 0, sizeof(kind_cache));
+#ifdef ORACLE_IDLE_STATS
+	extern void ps2_idle_shadow_reset(void);
+	ps2_idle_shadow_reset();
+#endif
+}
+
+#ifdef ORACLE_IDLE_STATS
+/* Host oracle, ps2_idle_enabled == 2: skip nothing, and check every skip
+ * that would have been taken. A skip of k passes at c cycles claims that
+ * the next k hits of the hook are this same branch, in the same state,
+ * c cycles apart. */
+uint32 ps2_idle_shadow_checked = 0, ps2_idle_shadow_wrong = 0;
+static struct
+{
+	LoopState s;
+	int32 c, left;
+} shadow;
+
+void ps2_idle_shadow_reset(void)
+{
+	shadow.left = 0;
+}
+
+static void shadow_expect(int32 k, int32 c)
+{
+	snapshot(shadow.s);
+	shadow.c = c;
+	shadow.left = k;
+	ps2_idle_shadow_checked++;
+}
+
+/* True when this hit was one of the predicted passes. */
+static bool shadow_verify(void)
+{
+	if (!shadow.left)
+		return false;
+	LoopState now;
+	snapshot(now);
+	shadow.s.cycles += shadow.c;
+	if (!same_state(shadow.s, now) || now.cycles != shadow.s.cycles)
+	{
+		if (ps2_idle_shadow_wrong++ < 5)
+			fprintf(stderr, "idle shadow: wrong skip at %06x, c %d: expected cycles %d, got %06x at %d\n",
+				(unsigned)shadow.s.pbpc, (int)shadow.c, (int)shadow.s.cycles, (unsigned)now.pbpc, (int)now.cycles);
+		shadow.left = 0;
+		return false;
+	}
+	shadow.left--;
+	return true;
+}
+#define SHADOW (ps2_idle_enabled == 2)
+#else
+#define SHADOW 0
+#define shadow_expect(k, c)
+#endif
+
 void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 {
 	if (!ps2_idle_enabled || Settings.SA1 || Settings.SuperFX)
 		return;
+#ifdef ORACLE_IDLE_STATS
+	if (SHADOW && shadow_verify())
+		return;
+#endif
 
 	/* Anything pending that the main loop would act on: don't touch. */
 	if (CPU.NMIPending || CPU.IRQLine || CPU.IRQExternal || CPU.WaitingForInterrupt ||
 	    Timings.IRQFlagChanging || (CPU.Flags & SCAN_KEYS_FLAG))
 	{
-		last.valid = false;
+		S9xIdleLoopLive = 0;
 		return;
 	}
 
@@ -344,55 +465,86 @@ void S9xIdleLoopCheck(uint16 target, uint16 after_branch)
 		/* Every skipped pass must end before the limit (events fire at
 		 * "cycles >= event"). */
 		int32 k = (limit - CPU.Cycles - 1) / known.c;
-		if (k > 0)
+		if (k > 0 && SHADOW)
+			shadow_expect(k, known.c);
+		else if (k > 0)
 		{
 			ps2_idle_plain_skips++;
 			CPU.Cycles += k * known.c;
 			ps2_idle_skipped_cycles += (uint32)(k * known.c);
 		}
 		/* (not a pass the proof below may measure from) */
-		last.valid = false;
+		S9xIdleLoopLive = 0;
 		return;
 	}
 
+	/* Most hits are loops whose registers change (counters): they only
+	 * leave their state behind for the next hit to compare with. This is
+	 * the hot path of the hook - thousands of hits per frame. */
+	if (!S9xIdleLoopLive || !at_state(last))
+	{
+		snapshot(last);
+		last_kind = 0;
+		S9xIdleLoopLive = 1;
+		return;
+	}
+
+	/* Two passes with the same registers: decode the body. */
 	LoopState now;
 	snapshot(now);
+	uint8 kind, len = (uint8)(after_branch - target);
+	const uint8 *code = direct_ptr(ICPU.ShiftedPB | target);
+	bool in_rom = code >= Memory.ROM && code < Memory.ROM + CMemory::MAX_ROM_SIZE;
+	if (!code || len > sizeof(last_code) || (target & MEMMAP_MASK) + len > MEMMAP_BLOCK_SIZE)
+		kind = LOOP_IMPURE;
+	else
+		kind = (uint8)loop_kind(target, after_branch, code, len, in_rom);
 
-	/* Decode the body only after two identical passes (loops whose
-	 * registers change, e.g. counters, never get this far), and only
-	 * once per loop thanks to the purity cache. */
-	if (last.valid && same_state(last, now))
+	/* No H-event since the previous hit, and the code that ran from there
+	 * was this body, so the pass between the two was the body and nothing
+	 * else. For code in ROM that follows from the bytes being what they
+	 * are now; code in RAM must have been decoded at the previous hit too
+	 * (it could otherwise have been something that rewrote itself). */
+	if (kind != LOOP_IMPURE && same_state(last, now) &&
+	    (in_rom || (last_kind == kind && last_len == len && !memcmp(last_code, code, len))))
 	{
-		int kind = loop_kind(target, after_branch);
-		if (kind != LOOP_IMPURE)
+		int32 c = now.cycles - last.cycles;
+		if (c > 0 && c <= 512)
 		{
-			int32 c = now.cycles - last.cycles;
-			if (c > 0 && c <= 512)
+			int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
+			/* Whole passes that end before the limit (events fire at
+			 * "cycles >= event"). */
+			int32 k = (limit - CPU.Cycles - 1) / c;
+			/* Handshake loops: only as far as the SPC700 leaves the
+			 * port unchanged (runs it ahead; see apu.cpp). */
+			if (k > 0 && kind == LOOP_HANDSHAKE)
+				k = CPU.InDMAorHDMA || SHADOW ? 0 : S9xAPUHandshakeSkip(c, k);
+			if (k > 0 && SHADOW)
 			{
-				int32 limit = CPU.NextEvent < Timings.NextIRQTimer ? CPU.NextEvent : Timings.NextIRQTimer;
-				/* Whole passes that end before the limit (events fire at
-				 * "cycles >= event"). */
-				int32 k = (limit - CPU.Cycles - 1) / c;
-				/* Handshake loops: only as far as the SPC700 leaves the
-				 * port unchanged (runs it ahead; see apu.cpp). */
-				if (k > 0 && kind == LOOP_HANDSHAKE)
-					k = CPU.InDMAorHDMA ? 0 : S9xAPUHandshakeSkip(c, k);
-				if (k > 0)
-				{
-					if (kind == LOOP_HANDSHAKE)
-						ps2_idle_handshake_skips++, ps2_idle_handshake_passes += k;
-					else
-						ps2_idle_plain_skips++;
-					if (kind == LOOP_PURE)
-						remember_loop(target, after_branch, now, c);
-					CPU.Cycles += k * c;
-					ps2_idle_skipped_cycles += (uint32)(k * c);
-					now.cycles = CPU.Cycles;
-				}
+				remember_loop(target, after_branch, now, c);
+				shadow_expect(k, c);
+			}
+			else if (k > 0)
+			{
+				if (kind == LOOP_HANDSHAKE)
+					ps2_idle_handshake_skips++, ps2_idle_handshake_passes += k;
+				else
+					ps2_idle_plain_skips++;
+				if (kind == LOOP_PURE)
+					remember_loop(target, after_branch, now, c);
+				CPU.Cycles += k * c;
+				ps2_idle_skipped_cycles += (uint32)(k * c);
+				now.cycles = CPU.Cycles;
 			}
 		}
 	}
 
-	now.valid = true;
 	last = now;
+	last_kind = kind;
+	if (kind != LOOP_IMPURE && !in_rom)
+	{
+		last_len = len;
+		memcpy(last_code, code, len);
+	}
+	S9xIdleLoopLive = 1;
 }

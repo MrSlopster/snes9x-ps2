@@ -94,8 +94,15 @@ static void S9xSoftResetCPU (void)
 	S9xUnpackStatus();
 }
 
+#ifdef _EE
+void S9xIdleLoopReset (void); /* ps2/ps2_idle.cpp */
+#endif
+
 void S9xReset (void)
 {
+#ifdef _EE
+	S9xIdleLoopReset();
+#endif
 	S9xResetSaveTimer(FALSE);
 
 	memset(Memory.RAM, 0x55, sizeof(Memory.RAM));
@@ -133,6 +140,9 @@ void S9xReset (void)
 
 void S9xSoftReset (void)
 {
+#ifdef _EE
+	S9xIdleLoopReset();
+#endif
 	S9xResetSaveTimer(FALSE);
 
 	memset(Memory.FillRAM, 0, 0x8000);

@@ -1314,8 +1314,15 @@ void S9xFreezeToStream (STREAM stream)
 	delete [] soundsnapshot;
 }
 
+#ifdef _EE
+void S9xIdleLoopReset (void); /* ps2/ps2_idle.cpp */
+#endif
+
 int S9xUnfreezeFromStream (STREAM stream)
 {
+#ifdef _EE
+	S9xIdleLoopReset();
+#endif
 	const bool8 fast = Settings.FastSavestates;
 
 	int		result = SUCCESS;

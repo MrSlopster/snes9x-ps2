@@ -22,6 +22,9 @@ const char *ps2_save_dir(void);
 /* The .srm to load: the save location, else a copy next to the ROM. */
 std::string ps2_sram_load_path(void);
 #endif
+/* Write the battery save; the old one stays valid until the new one is
+ * complete. False (with errno in *err) if it could not be written. */
+bool ps2_sram_save(int *err);
 
 /* Search the roms dir for a loadable ROM in priority order; NULL when none. */
 const char *ps2_find_rom(void);

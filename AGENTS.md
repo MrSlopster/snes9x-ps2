@@ -46,8 +46,15 @@ and embedded in the ELF.
   `DEFS="-D_EE -DPIXEL_FORMAT=BGR555 -DORACLE_IDLE_STATS -I<repo>/ps2"` and
   `EXTRA_SRCS` = `ps2/ps2_idle.cpp ps2/ps2_spu_core.cpp
   ps2/ps2_brr_adpcm.cpp ps2/tools/oracle/spu2sim.cpp` - and diff the
-  `PFRAME` lines over a long run (20000 frames, several games). Its
-  Makefile does not track headers either: delete the affected objects.
+  `PFRAME` lines over a long run (20000 frames, several games), without
+  input and with `--seed N` (random pad input, the same in both builds):
+  without input a game never leaves its title screen, and a skipper bug
+  that only showed in gameplay got through that way. Its Makefile does not
+  track headers either: delete the affected objects.
+  - `--idle-shadow`: skip no idle loop, but check every skip that would
+    have been taken against what the 65816 then really does (reports
+    "N skips checked, M wrong"; M must be 0). `--no-idle` switches the
+    skipper off.
   - `--smp-selftest N`: the port's SPC700 loop against the reference
     `op_step()` from random states.
   - `--wav F` / `--fast-wav F` and `sndcmp.py`: record the accurate sound
@@ -73,7 +80,7 @@ and embedded in the ELF.
 | IOP modules | `ps2/ps2_iop.*`, `ps2/snesspu/` |
 | Accurate sound output | `ps2/s9x_sound_driver_audsrv.*` |
 | Fast sound (SPU2 voices) | `ps2/ps2_spu.*`, `ps2_spu_core.*`, `ps2_brr_adpcm.*`, `apu/bapu/dsp/SPC_DSP.*` (`fast_*`) |
-| 65816 idle-loop skipping | `ps2/ps2_idle.*`, hook in `cpumacro.h` |
+| 65816 idle-loop skipping | `ps2/ps2_idle.*`, hooks in `cpumacro.h` (branches), `cpuexec.cpp` (interrupts), `cpu.cpp` / `snapshot.cpp` (reset) |
 | SPC700 loop, idle skip, lazy timers | `apu/bapu/smp/` (`ee_*`) |
 | Deferred APU queue, handshake skip | `apu/apu.cpp` |
 | Profiler | `ps2/ps2_prof.*` |

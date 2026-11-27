@@ -287,11 +287,36 @@ static void map_buttons(void)
 		}
 }
 
+/* --seed N: deterministic random pad input on both pads, so that the
+ * comparison reaches gameplay and not only boot code and title screens.
+ * Start, A and X are pressed more often to get through menus. */
+static bool in_enabled;
+static uint32 in_seed = 1;
+static uint8 in_held[2][12];
+static void input_frame(void)
+{
+	for (int pad = 0; pad < 2; pad++)
+		for (int i = 0; i < 12; i++)
+		{
+			if (in_held[pad][i])
+				in_held[pad][i]--;
+			else
+			{
+				in_seed = in_seed * 1103515245u + 12345u;
+				unsigned r = in_seed >> 13;
+				unsigned p = (i == 3 || i == 8 || i == 9) ? 500u : 150u;
+				if ((r & 0x7fff) < p)
+					in_held[pad][i] = 1 + ((r >> 8) % 45);
+			}
+			S9xReportButton(((pad + 1) << 4) | i, in_held[pad][i] != 0);
+		}
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 3)
 	{
-		fprintf(stderr, "usage: oracle ROM FRAMES [--dump N[,N...]] [--dump-dir DIR] [--dump-apu N]\n"
+		fprintf(stderr, "usage: oracle ROM FRAMES [--dump N[,N...]] [--dump-dir DIR] [--dump-apu N] [--seed N]\n"
 				"              [--wav FILE] [--fast-wav FILE | --smp-selftest N (port build)]\n");
 		return 2;
 	}
@@ -311,7 +336,16 @@ int main(int argc, char **argv)
 			if (wav_file)
 				wav_header(wav_file, 0);
 		}
+		else if (!strcmp(argv[i], "--seed") && i + 1 < argc)
+		{
+			in_enabled = true;
+			in_seed = (uint32)atoi(argv[++i]) | 1;
+		}
 #ifdef _EE
+		else if (!strcmp(argv[i], "--no-idle"))
+			ps2_idle_enabled = 0;
+		else if (!strcmp(argv[i], "--idle-shadow"))
+			ps2_idle_enabled = 2;
 		else if (!strcmp(argv[i], "--smp-selftest") && i + 1 < argc)
 			smp_selftest_trials = (unsigned)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--fast-wav") && i + 1 < argc)
@@ -381,7 +415,11 @@ int main(int argc, char **argv)
 #endif
 
 	while (frame_no < frames && !Settings.StopEmulation)
+	{
+		if (in_enabled)
+			input_frame();
 		S9xMainLoop();
+	}
 	if (wav_file)
 	{
 		wav_header(wav_file, wav_frames);
@@ -399,6 +437,8 @@ int main(int argc, char **argv)
 #ifdef ORACLE_IDLE_STATS
 	fprintf(stderr, "idle: plain skips %u, handshake skips %u (%u passes)\n", ps2_idle_plain_skips,
 		ps2_idle_handshake_skips, ps2_idle_handshake_passes);
+	if (ps2_idle_enabled == 2)
+		fprintf(stderr, "idle shadow: %u skips checked, %u wrong\n", ps2_idle_shadow_checked, ps2_idle_shadow_wrong);
 	fprintf(stderr, "spc700 idle: %u skips, %.1f%% of %u cycles\n", SNES::smp.ee_idle_skips,
 		100.0 * SNES::smp.ee_idle_skipped_cycles / (SNES::smp.ee_cycles ? SNES::smp.ee_cycles : 1), SNES::smp.ee_cycles);
 #endif

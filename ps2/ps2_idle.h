@@ -10,3 +10,9 @@ extern uint32 ps2_idle_skipped_cycles; /* master cycles since last reset */
 extern uint32 ps2_idle_plain_skips, ps2_idle_handshake_skips, ps2_idle_handshake_passes;
 
 void S9xIdleLoopCheck(uint16 target, uint16 after_branch);
+/* Reset, ROM load, state load (called from the core). */
+void S9xIdleLoopReset(void);
+
+#ifdef ORACLE_IDLE_STATS
+extern uint32 ps2_idle_shadow_checked, ps2_idle_shadow_wrong;
+#endif

@@ -110,6 +110,11 @@ bool ps2_config_save(void)
 	fprintf(f, "netlog=%d\n", ps2_cfg.netlog ? 1 : 0);
 	fprintf(f, "netlog_host=%s\n", ps2_cfg.netlog_host.c_str());
 	fprintf(f, "last_dir=%s\n", ps2_cfg.last_dir.c_str());
+	/* Debug switches, set by hand: kept if they were there. */
+	if (ps2_cfg.gs_compare)
+		fprintf(f, "gs_compare=1\n");
+	if (ps2_cfg.dump_frames)
+		fprintf(f, "dump_frames=1\n");
 	fclose(f);
 	return true;
 }

@@ -103,8 +103,12 @@ void S9xIdleLoopCheck (uint16 target, uint16 after_branch);
 #define IDLE_LOOP_HOOK(target, after) \
 	if ((uint16) ((after) - (target)) <= 12 && (target) < (after)) \
 		S9xIdleLoopCheck((target), (after))
+/* A branch that is not taken ends the chain of consecutive loop passes. */
+extern uint8 S9xIdleLoopLive;
+#define IDLE_LOOP_BREAK() S9xIdleLoopLive = 0
 #else
 #define IDLE_LOOP_HOOK(target, after)
+#define IDLE_LOOP_BREAK()
 #endif
 
 #define bOP(OP, REL, COND, CHK, E) \
@@ -124,6 +128,10 @@ static void Op##OP (void) \
 			IDLE_LOOP_HOOK(newPC.W, Registers.PCw); \
 			Registers.PCw = newPC.W; \
 		} \
+	} \
+	else \
+	{ \
+		IDLE_LOOP_BREAK(); \
 	} \
 }
 

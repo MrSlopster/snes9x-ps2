@@ -23,6 +23,8 @@ static volatile unsigned extra_epc[6];
 static volatile unsigned extra_n = 0;
 static volatile unsigned reports = 0;
 static int sema = -1;
+/* The thread being watched and the priority it normally runs at. */
+static int main_tid = -1, main_prio = -1;
 static unsigned char stack[16 * 1024] __attribute__((aligned(16)));
 
 void ps2_watchdog_kick(void)
@@ -59,6 +61,17 @@ static void watchdog_thread(void *)
 	for (;;)
 	{
 		WaitSema(sema);
+
+		/* A thread that spins without ever blocking keeps everything
+		 * below it from running, the TCP/IP stack included: the report
+		 * would never leave. Put it at the bottom while reporting. (Not
+		 * when it is there already: the wait for the network to start
+		 * lowers itself, and puts itself back.) */
+		ee_thread_status_t st;
+		bool demoted = main_tid >= 0 && ReferThreadStatus(main_tid, &st) >= 0 && st.current_priority != 127;
+		if (demoted)
+			ChangeThreadPriority(main_tid, 127);
+
 		char line[160];
 		snprintf(line, sizeof(line), "WATCHDOG no frame for %u vblanks: pc %08x stage \"%s\" (report %u)", since_kick,
 			 stall_epc, ps2_stage ? ps2_stage : "?", ++reports);
@@ -83,6 +96,9 @@ static void watchdog_thread(void *)
 				 extra_epc[4], extra_epc[5]);
 			ps2_menu_status("Hang watchdog (please report these)", a, b);
 		}
+
+		if (demoted)
+			ChangeThreadPriority(main_tid, main_prio);
 	}
 }
 
@@ -98,13 +114,22 @@ void ps2_watchdog_init(void)
 	if (sema < 0)
 		return;
 
+	/* (called from the main thread, at its normal priority) */
+	ee_thread_status_t me;
+	main_tid = GetThreadId();
+	main_prio = ReferThreadStatus(main_tid, &me) >= 0 ? me.current_priority : 64;
+	printf("watchdog: main thread %d has priority %d\n", main_tid, main_prio);
+
 	ee_thread_t t;
 	memset(&t, 0, sizeof(t));
 	t.func = (void *)watchdog_thread;
 	t.stack = stack;
 	t.stack_size = sizeof(stack);
 	t.gp_reg = &_gp;
-	t.initial_priority = 8; /* above the main thread and the network stack */
+	/* Above everything: ps2sdk starts the main thread at priority 1 (lower
+	 * numbers run first), and a hang that never blocks is exactly what
+	 * this thread has to be able to interrupt. */
+	t.initial_priority = 0;
 	int id = CreateThread(&t);
 	if (id >= 0)
 		StartThread(id, NULL);

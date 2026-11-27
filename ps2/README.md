@@ -5,28 +5,32 @@ A port of the current upstream **Snes9x 1.63** core
 2026-09-24) to the PlayStation 2, replacing the 2011 Snes9x-1.53-based port
 (BoGanon/snes9x).
 
-All port code lives in this directory. The upstream emulation core is used
-essentially unmodified (two small, documented edits; see "Repo
-relationship"), so every accuracy fix from the last 15 years (PPU, APU, DSP,
-SA-1, SuperFX, MSU-1 support, ...) applies automatically.
+All port code lives in this directory. The emulation core is upstream's,
+so every accuracy fix from the last 15 years (PPU, APU, DSP, SA-1, SuperFX,
+MSU-1 support, ...) applies. It carries PS2 speed-ups, all guarded by
+`#ifdef _EE`: without that definition the tree builds as plain upstream
+(see "Repo relationship", and `AGENTS.md` at the top of the repository for
+how they are verified).
 
-## What works (v1)
+## What works
 
-- ROM loading: `.sfc`, `.smc`, `.zip`, `.jma`, `.bin`, `.fig`, `.swc`
+- ROM loading: `.sfc`, `.smc`, `.zip`, `.jma`, `.bin`, `.fig`, `.swc`, from
+  an on-screen browser
 - Video through the Graphics Synthesizer, 640x448 (NTSC) / 640x512 (PAL),
-  stretch-scaled,
-  double-buffered and flipped at vblank (no tearing, no blocking)
-- Audio through `audsrv` (48 kHz stereo), sound-sync throttling
-- Two digital pads mapped to SNES joypads (multitap is a follow-up; v1
-  opens two controller ports only)
-- SRAM saves (auto-saved every 30 s and on shutdown)
+  stretch-scaled, double-buffered and flipped at vblank (no tearing, no
+  blocking). Two renderers: the GS draws the SNES picture itself (tiles as
+  textured sprites; the default), or the core's software renderer
+- Sound in two ways: "Fast" plays the SNES voices on SPU2 hardware voices
+  (the default; no echo), "Accurate" is the core's DSP through `audsrv`
+  (48 kHz stereo)
+- Two digital pads mapped to SNES joypads (multitap is a follow-up; only
+  two controller ports are opened)
+- SRAM saves (auto-saved when the game writes them and on leaving a game)
 - Save states, SPC dumps, IPS/BPS patching (core features, file-based)
 - MSU-1 (file-based; no port work needed)
 
-## Not in v1
+## Not there
 
-- The old on-screen GUI/config browser (the 2011 `interface` library pins
-  ps2sdk libraries that no longer exist; needs its own modernization)
 - Cheats UI (the cheat engine works; enable via `.cht` files later)
 - Netplay, movies
 
@@ -43,19 +47,20 @@ EOF
 docker run --rm -v "$PWD":/src -w /src/ps2 localhost/snes9x-ps2build make -j8
 ```
 
-Output: `ps2/snes9x.elf` (EE, ~3.2 MB loadable).
+Output: `ps2/snes9x.elf` (EE, about 4.2 MB of code and data; the file has
+debug information, strip it to deploy).
 
 Compiler profile: `-O3 -mtune=r5900 -mhard-float -fsingle-precision-constant
--mfused-madd -ffast-math` (R5900 pipeline tuning, hard float). `-Ofast` is a
-candidate for later hardware testing only.
+-mfused-madd -ffast-math`, with `-O2`/`-Os` for the files whose code has to
+fit the 16 KB instruction cache (see the Makefile).
 
 ## Deploying / testing on hardware
 
 1. Create the data layout on your storage device:
 
 ```
-<base>/snes9x/roms/      your ROMs go here
-<base>/snes9x/srm/       SRAM saves (created automatically)
+<base>/snes9x/roms/      your ROMs go here (or anywhere: the browser can go there)
+<base>/snes9x/srm/       SRAM saves, when the ROM's own folder cannot be written
 <base>/snes9x/saves/     save states
 <base>/snes9x/shots/     screenshots
 <base>/snes9x/spc/       SPC dumps
@@ -66,7 +71,15 @@ candidate for later hardware testing only.
 
 `<base>` is chosen at boot: first the device the ELF was launched from,
 then `mass:` (USB), `mc0:` (memory card slot 1), `host:` (ps2link). A USB
-stick gets up to ~2 s to mount before the probe.
+stick gets up to ~2 s to mount before the probe. If that place cannot be
+written, settings and the folders above move to `mc0:/snes9x` (then
+`mc1:/snes9x`).
+
+A game's battery save is `<rom name>.srm` next to the ROM. It is written to
+`<rom name>.sr~` first, read back, and only then put in place, so a reset or
+power cut during a save leaves the previous one (a leftover `.sr~` is picked
+up at the next load). A save that could not be written is reported on
+screen.
 
 The IOP drivers (iomanX, fileXio, sio2man, mcman/mcserv, padman, mtapman,
 libsd, audsrv, usbd, bdm, bdmfs_fatfs, usbmass_bd) are embedded in the ELF
@@ -97,8 +110,10 @@ needs it is skipped (no audio / no pads) rather than hanging boot.
 4. Settings (Start in the browser, or from the in-game menu) are saved to
    `<base>/snes9x/ps2.cfg`: video mode (Auto, NTSC 480i, PAL 576i, NTSC
    240p, PAL 288p, 480p over component), screen filter (smooth/sharp), frame
-   skip (Auto, 0-4), show FPS, sound on/off. A new video mode must be
-   confirmed with Cross within 10 s or it reverts.
+   skip (Auto, 0-4), overlay (frame rate, profiler), sound (Off, Accurate,
+   Fast), renderer (Software, GS, GS + check against software), network log
+   (diagnostics over UDP; address from `mc0:/SYS-CONF/IPCONFIG.DAT`). A new
+   video mode must be confirmed with Cross within 10 s or it reverts.
 
 5. In game, hold **Select+Start** for the in-game menu: resume, save/load
    state (`<base>/snes9x/saves/<game>.000`), reset, settings, load another
@@ -132,9 +147,13 @@ needs it is skipped (no audio / no pads) rather than hanging boot.
 
 ## Known risks / follow-ups
 
-- **Performance is untested on hardware.** The 1.63 core does more per
-  frame than the 2011 1.53 core; frame-rate comparison against the old fork
-  is a hardware test item.
+- Performance on a real console (GS renderer, Fast sound): EarthBound
+  holds 60 fps in ordinary scenes; F-Zero's races and loading phases keep
+  the 65816 busy for most of a frame and need frame skipping. Games using
+  SA-1 or SuperFX have not been measured.
+- The GS renderer and Fast sound are approximations by design (Settings
+  has the exact alternatives); everything else is checked to match upstream
+  bit for bit on the host (`AGENTS.md`).
 - PS2-specific work already done in the port layer:
   - The core renders `BGR555`, which is the GS PSMCT16 layout, so frames
     need no CPU colour conversion.
@@ -154,8 +173,10 @@ needs it is skipped (no audio / no pads) rather than hanging boot.
 
 ## Repo relationship
 
-- `snes9x-1.63-ps2` = upstream master + `ps2/` port directory, plus two
-  core edits:
+- `snes9x-1.63-ps2` = upstream master + `ps2/` port directory, plus core
+  edits under `#ifdef _EE` (65816 dispatch and idle-loop hook, SPC700 loop
+  and timers, deferred APU work, the DSP's fast-sound path, hooks for the
+  GS renderer) and two that apply everywhere:
   - `memmap.cpp`: `XPSdecode` signature (portability; see the commit
     history).
   - `pixform.h`: an additive `BGR555` pixel format (selected by the PS2
