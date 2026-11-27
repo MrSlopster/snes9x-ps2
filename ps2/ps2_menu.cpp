@@ -363,7 +363,7 @@ static const char *video_mode_names[PS2_VIDEO_MODE_COUNT] = {
 static const char *filter_names[PS2_FILTER_COUNT] = { "Smooth", "Sharp" };
 static const char *overlay_names[PS2_OVERLAY_COUNT] = { "Off", "FPS", "Profiler", "Profiler+PMC" };
 static const char *sound_names[PS2_SOUND_COUNT] = { "Off", "Accurate", "Fast (SPU2 voices)" };
-static const char *renderer_names[PS2_RENDERER_COUNT] = { "Software", "GS (experimental)", "GS + check vs software (slow)" };
+static const char *renderer_names[PS2_RENDERER_COUNT] = { "Software", "GS", "GS + check vs software (slow)" };
 
 enum
 {
